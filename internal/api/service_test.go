@@ -13,6 +13,7 @@ import (
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 	"github.com/duck-driven-llm-proxy-service/internal/policy"
 	"github.com/duck-driven-llm-proxy-service/internal/store"
+	"github.com/duck-driven-llm-proxy-service/internal/tempdetect"
 )
 
 type fakeDetector struct {
@@ -114,6 +115,63 @@ func TestUnicodeRoundtrip(t *testing.T) {
 	if orig != text {
 		t.Fatalf("unicode roundtrip mismatch:\n got %q\nwant %q", orig, text)
 	}
+}
+
+func TestRestoreModifiedTextByTokens(t *testing.T) {
+	// LLM может изменить текст между маскированием и демаскированием,
+	// но токены сохраняются. Восстановление должно работать по токенам.
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-mod", "default")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask == text {
+		t.Fatal("mask equals original")
+	}
+
+	// LLM перефразировал текст, но оставил токен.
+	modified := "Пожалуйста, свяжитесь с клиентом по адресу " + mask + " спасибо"
+	restored, err := svc.Process(context.Background(), modified, "id-mod", "default")
+	if err != nil {
+		t.Fatalf("restore modified: %v", err)
+	}
+	want := "Пожалуйста, свяжитесь с клиентом по адресу email test@mail.ru спасибо"
+	if restored != want {
+		t.Fatalf("token restore mismatch:\n got %q\nwant %q", restored, want)
+	}
+}
+
+func TestRestoreModifiedTextNoTokens(t *testing.T) {
+	// Если LLM удалил токены полностью, восстановление невозможно —
+	// текст не содержит токенов, значит это новый маскинг для того же id.
+	// Используем реальный временный детектор, который находит email только там,
+	// где он действительно есть.
+	text := "email test@mail.ru"
+	svc := newTestService(tempdetect.New(), defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-notok", "default")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask == text {
+		t.Fatal("mask equals original")
+	}
+
+	// Текст без токенов и не равный оригиналу → новая операция маскирования.
+	newText := "совсем другой текст"
+	res, err := svc.Process(context.Background(), newText, "id-notok", "default")
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if res != newText {
+		t.Fatalf("expected new masking to return unchanged text, got %q", res)
+	}
+	_ = mask
 }
 
 func TestConcurrentSameID(t *testing.T) {

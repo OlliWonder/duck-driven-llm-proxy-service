@@ -72,20 +72,41 @@ func (s *Service) Process(ctx context.Context, payload, payloadID, consumer stri
 	if err != nil {
 		return "", err
 	}
+	mappingsBytes, err := s.store.Decrypt(rec.Mappings)
+	if err != nil {
+		return "", err
+	}
+	mappings, err := decodeMappings(mappingsBytes)
+	if err != nil {
+		return "", err
+	}
 
 	switch {
 	case string(original) == payload:
 		// Повтор оригинала → идемпотентное маскирование, возвращаем ту же маску.
 		return string(masked), nil
 	case string(masked) == payload:
-		// Запрос на демаскирование.
+		// Точное демаскирование: пришла та же маска.
 		if !p.RestoreAllowed {
 			return "", fmt.Errorf("%w: restore not allowed for consumer %q", ErrForbidden, consumer)
 		}
 		return string(original), nil
 	default:
-		// Тот же payload_id переиспользован с другим payload → считаем новой
-		// операцией маскирования (перезапись).
+		// Возможно, текст был изменён LLM, но токены сохранились.
+		// Восстанавливаем оригинал по токенам.
+		restored, rerr := masking.Restore(payload, mappings)
+		if rerr != nil {
+			return "", rerr
+		}
+		if restored != payload {
+			// Найдены токены → это демаскирование изменённого текста.
+			if !p.RestoreAllowed {
+				return "", fmt.Errorf("%w: restore not allowed for consumer %q", ErrForbidden, consumer)
+			}
+			return restored, nil
+		}
+		// Токенов нет и текст не совпадает ни с оригиналом, ни с маской →
+		// считаем новой операцией маскирования (перезапись).
 		return s.doMask(ctx, payload, payloadID, p)
 	}
 }
