@@ -32,7 +32,18 @@ func (d *BirthPlaceDetector) Detect(_ context.Context, text string) ([]Fragment,
 		}
 		valStart := skipSeparators(text, labelEnd)
 		valStart = skipPersonalFieldQualifier(text, lowerText, valStart)
-		valEnd, ok := scanTextValueKeepDot(text, valStart)
+		if _, isDate := scanDate(text, valStart); isDate {
+			from = labelEnd + 1
+			continue
+		}
+		if _, isDate := scanTextDate(text, valStart); isDate {
+			from = labelEnd + 1
+			continue
+		}
+		// A birthplace may itself contain a comma-separated hierarchy, e.g.
+		// "Республика Татарстан, г. Казань". Use the address-style scanner,
+		// which still stops at a new labelled field or sentence boundary.
+		valEnd, ok := scanAddressValue(text, valStart)
 		if ok {
 			frags = append(frags, Fragment{Type: pii.TypeBirthPlace, Start: valStart, End: valEnd})
 			from = valEnd

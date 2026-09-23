@@ -59,7 +59,12 @@ func trimCandidateRolePrefix(text string, candidate Candidate) Candidate {
 	}
 	value := text[candidate.Start:candidate.End]
 	lower := strings.ToLower(value)
-	for _, role := range []string{"клиент", "заявитель", "заёмщик", "заемщик", "гражданин", "гражданка"} {
+	for _, role := range []string{
+		"клиент", "клиентка", "клиентку",
+		"заявитель", "заявительница",
+		"заёмщик", "заемщик", "заёмщица", "заемщица",
+		"гражданин", "гражданка",
+	} {
 		if !strings.HasPrefix(lower, role) {
 			continue
 		}
@@ -68,12 +73,12 @@ func trimCandidateRolePrefix(text string, candidate Candidate) Candidate {
 			continue
 		}
 		next, _ := utf8.DecodeRuneInString(lower[end:])
-		if !unicode.IsSpace(next) && next != ':' && next != '—' && next != '-' {
+		if !unicode.IsSpace(next) && next != ':' && next != ',' && next != '—' && next != '-' {
 			continue
 		}
 		for end < len(value) {
 			r, size := utf8.DecodeRuneInString(value[end:])
-			if !unicode.IsSpace(r) && r != ':' && r != '—' && r != '-' {
+			if !unicode.IsSpace(r) && r != ':' && r != ',' && r != '—' && r != '-' {
 				break
 			}
 			end += size
@@ -108,6 +113,18 @@ func (v *Validator) decide(text string, c Candidate) (pii.Type, bool) {
 	// Ближайшая подпись слева и справа от кандидата.
 	leftSig, leftDist, leftOK := nearestBefore(before, sigs)
 	rightSig, rightDist, rightOK := nearestAfter(after, sigs)
+	// A comma may introduce an appositive person name: "Заёмщик, Алексей
+	// Морозов". Commas normally isolate unrelated clauses (important for
+	// public-person filtering), so bridge only an immediately preceding phrase
+	// that ends with a known signature.
+	if !leftOK && c.Label == LabelPER {
+		if appositive := appositiveSignatureContext(text, c.Start); appositive != "" {
+			if appSig, appDist, ok := nearestBefore(appositive, sigs); ok && appDist == 0 {
+				before = appositive
+				leftSig, leftDist, leftOK = appSig, appDist, true
+			}
+		}
+	}
 
 	// Выбираем ближайшую; при равенстве — слева.
 	var sig signature
@@ -140,6 +157,30 @@ func (v *Validator) decide(text string, c Candidate) (pii.Type, bool) {
 		return "", false
 	}
 	return sig.typ, true
+}
+
+func appositiveSignatureContext(text string, candidateStart int) string {
+	i := candidateStart
+	for i > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:i])
+		if !unicode.IsSpace(r) {
+			break
+		}
+		i -= size
+	}
+	if i == 0 || text[i-1] != ',' {
+		return ""
+	}
+	end := i - 1
+	start := end
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:start])
+		if r == ',' || r == ';' || r == '.' || r == '!' || r == '?' || r == '\n' || r == '\r' {
+			break
+		}
+		start -= size
+	}
+	return strings.ToLower(strings.TrimSpace(text[start:end]))
 }
 
 // clauseStart возвращает начало части предложения, содержащей позицию pos.
@@ -311,6 +352,9 @@ var perSignatures = []signature{
 	{text: "имя держателя", typ: pii.TypeCardHolder},
 	// Положительные → full_name.
 	{text: "клиента", typ: pii.TypeFullName},
+	{text: "клиентки", typ: pii.TypeFullName},
+	{text: "клиентку", typ: pii.TypeFullName},
+	{text: "клиентка", typ: pii.TypeFullName},
 	{text: "клиенту", typ: pii.TypeFullName},
 	{text: "клиентом", typ: pii.TypeFullName},
 	{text: "клиент", typ: pii.TypeFullName},
@@ -319,6 +363,9 @@ var perSignatures = []signature{
 	{text: "сотрудник", typ: pii.TypeFullName},
 	{text: "пользователь", typ: pii.TypeFullName},
 	{text: "заявитель", typ: pii.TypeFullName},
+	{text: "заявительница", typ: pii.TypeFullName},
+	{text: "заявителя", typ: pii.TypeFullName},
+	{text: "заявительницы", typ: pii.TypeFullName},
 	{text: "абонент", typ: pii.TypeFullName},
 	{text: "покупатель", typ: pii.TypeFullName},
 	{text: "меня зовут", typ: pii.TypeFullName},
@@ -333,6 +380,10 @@ var perSignatures = []signature{
 	{text: "гражданина", typ: pii.TypeFullName},
 	{text: "заёмщика", typ: pii.TypeFullName},
 	{text: "заемщика", typ: pii.TypeFullName},
+	{text: "заёмщик", typ: pii.TypeFullName},
+	{text: "заемщик", typ: pii.TypeFullName},
+	{text: "заёмщица", typ: pii.TypeFullName},
+	{text: "заемщица", typ: pii.TypeFullName},
 	// Отрицательные → не ПДН.
 	{text: "поэт"},
 	{text: "писатель"},

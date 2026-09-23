@@ -18,11 +18,32 @@ func scanDate(text string, start int) (int, bool) {
 	if end, ok := scanISODate(text, start); ok {
 		return end, true
 	}
+	// ДД-ММ-ГГГГ / ММ-ДД-ГГГГ
+	if end, ok := scanHyphenDate(text, start); ok {
+		return end, true
+	}
 	// ДД/ММ/ГГГГ
 	if end, ok := scanSlashDate(text, start); ok {
 		return end, true
 	}
 	return 0, false
+}
+
+// scanHyphenDate распознаёт дату с дефисами. Четырёхзначный первый компонент
+// остаётся ISO-форматом и обрабатывается scanISODate.
+func scanHyphenDate(text string, start int) (int, bool) {
+	if start+10 > len(text) || !twoDigitsAt(text, start) || text[start+2] != '-' ||
+		!twoDigitsAt(text, start+3) || text[start+5] != '-' || !fourDigitsAt(text, start+6) {
+		return 0, false
+	}
+	end := start + 10
+	first, second := numberAt(text, start, 2), numberAt(text, start+3, 2)
+	year := numberAt(text, start+6, 4)
+	if !validDateBoundary(text, end) ||
+		(!validCalendarDate(first, second, year) && !validCalendarDate(second, first, year)) {
+		return 0, false
+	}
+	return end, true
 }
 
 // scanDottedDate распознаёт ДД.ММ.ГГГГ или ДД.ММ.ГГ.

@@ -48,6 +48,9 @@ func hasDrivingLicenseContext(text string, start int) bool {
 		}
 	}
 	drivingPos := maxLastIndex(lower, "водительск", "удостоверение водителя", "права", "driver license", "в/у", " ву", "ву:", "ву ")
+	if pos := lastBoundedIndex(lower, "ву"); pos > drivingPos {
+		drivingPos = pos
+	}
 	passportPos := maxLastIndex(lower, "паспорт", "серия")
 	return drivingPos >= 0 && drivingPos > passportPos
 }

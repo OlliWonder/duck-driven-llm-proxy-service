@@ -10,7 +10,7 @@ import (
 // addressLabels — подписи поля «адрес».
 var addressLabels = []string{
 	"фактический адрес проживания клиента", "фактическое место проживания", "место регистрации клиента", "доставка клиенту по адресу", "адрес проживания клиента", "новый адрес доставки", "почтовый адрес физлица", "адрес доставки клиента", "адрес доставки", "клиент живёт по адресу", "клиент живет по адресу",
-	"проживает по адресу", "адрес регистрации", "адрес проживания", "адрес клиента",
+	"проживает по адресу", "проживает в", "адрес регистрации", "адрес проживания", "адрес клиента",
 	"зарегистрирована", "зарегистрирован", "проживает", "адрес",
 }
 
@@ -40,6 +40,7 @@ func (d *AddressDetector) Detect(_ context.Context, text string) ([]Fragment, er
 			continue
 		}
 		valStart := skipSeparators(text, labelEnd)
+		valStart = skipPersonalFieldQualifier(text, lowerText, valStart)
 		valEnd, ok := scanAddressValue(text, valStart)
 		if ok && plausibleAddressValue(text[valStart:valEnd]) {
 			frags = append(frags, Fragment{Type: pii.TypeAddress, Start: valStart, End: valEnd})
@@ -72,8 +73,11 @@ func hasIPAddressPrefix(lowerText string, labelEnd int) bool {
 func isNonPIIAddressContext(lowerText string, labelEnd int) bool {
 	// "отделение банка, расположенное по адресу: ..." names a public
 	// organization location; the owner appears before the generic label.
-	before := contactClauseBefore(lowerText, labelEnd, 160)
-	if strings.Contains(before, "отделение банка") && strings.Contains(before, "располож") {
+	before := contactClauseBefore(lowerText, labelEnd, 192)
+	if cut := strings.LastIndex(before, ","); cut >= 0 {
+		before = before[cut+1:]
+	}
+	if hasOrganizationLocationContext(before) {
 		return true
 	}
 	// Пропускаем разделители.
@@ -83,6 +87,28 @@ func isNonPIIAddressContext(lowerText string, labelEnd int) bool {
 	}
 	for _, c := range nonPIIAddressContexts {
 		if strings.HasPrefix(lowerText[i:], c) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOrganizationLocationContext(context string) bool {
+	organization := false
+	for _, marker := range []string{
+		"отделение банка", "отделения банка", "филиал", "офис банка", "офис",
+		"организация", "компания", "магазин", "представительство",
+	} {
+		if strings.Contains(context, marker) {
+			organization = true
+			break
+		}
+	}
+	if !organization {
+		return false
+	}
+	for _, marker := range []string{"располож", "наход", "публич", "юридический адрес", "почтовый адрес"} {
+		if strings.Contains(context, marker) {
 			return true
 		}
 	}

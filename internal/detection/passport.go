@@ -70,7 +70,6 @@ func scanSeriesNumber(text string, start int) (int, bool) {
 		i++
 	}
 
-	separatorStart := i
 	for i < len(text) && (text[i] == ' ' || text[i] == '-' || text[i] == ',' || text[i] == ':') {
 		i++
 	}
@@ -82,9 +81,6 @@ func scanSeriesNumber(text string, start int) (int, bool) {
 	}
 	for i < len(text) && (text[i] == ' ' || text[i] == '-' || text[i] == ':' || text[i] == ',') {
 		i++
-	}
-	if i == separatorStart {
-		return 0, false
 	}
 	numberStart := i
 	for i < len(text) && isDigit(text[i]) && i-numberStart < 6 {
@@ -111,9 +107,26 @@ func hasPassportContext(text string, start int) bool {
 			return false
 		}
 	}
-	passportPos := maxLastIndex(lower, "паспорт", "серия")
+	passportPos := maxLastIndex(lower, "паспорт", "серия", "документ рф", "документ гражданина рф", "удостоверение личности")
 	drivingPos := maxLastIndex(lower, "водительск", "удостоверение водителя", "права", "driver license", " ву", "ву:", "ву ")
 	return passportPos >= 0 && passportPos > drivingPos
+}
+
+func lastBoundedIndex(text, label string) int {
+	last := -1
+	from := 0
+	for from <= len(text) {
+		idx := strings.Index(text[from:], label)
+		if idx < 0 {
+			break
+		}
+		idx += from
+		if hasLabelBoundaries(text, idx, label) {
+			last = idx
+		}
+		from = idx + 1
+	}
+	return last
 }
 
 func maxLastIndex(text string, markers ...string) int {

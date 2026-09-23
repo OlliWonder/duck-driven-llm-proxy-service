@@ -90,9 +90,32 @@ func skipSeparators(text string, from int) int {
 // skipPersonalFieldQualifier skips an optional owner between a field label
 // and its value, for example "гражданство клиента — РФ".
 func skipPersonalFieldQualifier(text, lowerText string, start int) int {
-	for _, qualifier := range []string{"клиента", "заявителя", "заёмщика", "заемщика", "владельца"} {
+	for _, qualifier := range []string{
+		"клиента", "клиентки", "клиенту",
+		"заявителя", "заявительницы", "заявителю",
+		"заёмщика", "заемщика", "заёмщицы", "заемщицы", "заёмщику", "заемщику",
+		"владельца", "владелицы", "владельцу", "получателя", "получателю", "физлица",
+	} {
 		end := start + len(qualifier)
 		if end <= len(lowerText) && strings.HasPrefix(lowerText[start:], qualifier) &&
+			(end == len(lowerText) || !isWordByte(lowerText[end])) {
+			return skipSeparators(text, end)
+		}
+	}
+	return start
+}
+
+// skipValueIntroducer removes neutral form wording between a label and its
+// value. These words describe how the field is filled and are never part of
+// the PII value itself (for example, "имя клиента указано как Иван Петров").
+func skipValueIntroducer(text, lowerText string, start int) int {
+	for _, introducer := range []string{
+		"указано как", "указана как", "указан как",
+		"записано как", "записана как", "записан как",
+		"значится как", "указано", "указана", "указан",
+	} {
+		end := start + len(introducer)
+		if end <= len(lowerText) && strings.HasPrefix(lowerText[start:], introducer) &&
 			(end == len(lowerText) || !isWordByte(lowerText[end])) {
 			return skipSeparators(text, end)
 		}
@@ -212,7 +235,7 @@ func scanAddressValue(text string, start int) (int, bool) {
 		if c == '.' && !isAddressAbbreviationDot(text, i) {
 			break
 		}
-		if c == ',' && (nextPIIField(text, i+1) || nextLabeledField(text, i+1)) {
+		if c == ',' && (nextPIIField(text, i+1) || nextLabeledField(text, i+1) || nextOrganizationAddressClause(text, i+1)) {
 			break
 		}
 		i++
@@ -250,12 +273,35 @@ func isAddressAbbreviationDot(text string, dot int) bool {
 	start := dot
 	for start > 0 {
 		c := text[start-1]
-		if c == ' ' || c == '\t' || c == ',' || c == ':' || c == ';' {
+		if c == ' ' || c == '\t' || c == ',' || c == ':' || c == ';' || c == '=' ||
+			c == '(' || c == ')' || c == '[' || c == ']' || c == '\n' || c == '\r' {
 			break
 		}
 		start--
 	}
 	return addressAbbreviations[strings.ToLower(text[start:dot])]
+}
+
+func nextOrganizationAddressClause(text string, start int) bool {
+	for start < len(text) && (text[start] == ' ' || text[start] == '\t') {
+		start++
+	}
+	lower := strings.ToLower(text[start:])
+	for _, conjunction := range []string{"а ", "но ", "при этом "} {
+		if strings.HasPrefix(lower, conjunction) {
+			lower = strings.TrimLeft(lower[len(conjunction):], " \t")
+			break
+		}
+	}
+	for _, owner := range []string{
+		"отделение банка", "отделение", "филиал", "офис банка", "офис",
+		"банк", "организация", "компания", "магазин", "представительство",
+	} {
+		if strings.HasPrefix(lower, owner) {
+			return true
+		}
+	}
+	return false
 }
 
 // nextLabeledField распознаёт начало следующего подписанного поля после

@@ -29,6 +29,7 @@ func (d *PassportIssuerDetector) Detect(_ context.Context, text string) ([]Fragm
 			break
 		}
 		valStart := skipSeparators(text, labelEnd)
+		valStart = skipValueIntroducer(text, lowerText, valStart)
 		valEnd, ok := scanTextValueKeepDot(text, valStart)
 		valEnd = trimIssuerBeforeDate(text, valStart, valEnd)
 		if ok && plausiblePassportIssuer(text[valStart:valEnd]) {
