@@ -10,7 +10,6 @@
 import os
 import statistics
 import sys
-import time
 
 import psutil
 

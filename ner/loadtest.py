@@ -86,7 +86,6 @@ def http_ner(host, port, text):
 def run_http_load(host, port, concurrency, total_requests, text_factory):
     """Запускает total_requests запросов с заданной concurrency."""
     latencies = []
-    errors = 0
     lock = threading.Lock()
     counter = {"done": 0}
 

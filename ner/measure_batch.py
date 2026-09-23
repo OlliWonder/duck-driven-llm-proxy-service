@@ -42,7 +42,7 @@ def main():
                 spans.append({"start": start, "end": end, "type": span.type, "text": text[span.start: span.stop]})
             results.append({"spans": spans})
         t2 = time.perf_counter()
-        data = json.dumps({"results": results}, ensure_ascii=False).encode("utf-8")
+        json.dumps({"results": results}, ensure_ascii=False).encode("utf-8")
         t3 = time.perf_counter()
 
         map_times.append((t1 - t0) * 1000)

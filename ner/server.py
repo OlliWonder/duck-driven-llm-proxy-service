@@ -97,76 +97,84 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_POST(self):
+        req = self._read_request()
+        if req is None:
+            return
+        if self.path == "/ner":
+            self._handle_ner(req)
+        elif self.path == "/ner/batch":
+            self._handle_batch(req)
+        else:
+            self.send_error(404)
+
+    def _read_request(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
             self._json(400, {"error": "invalid content length"})
-            return
+            return None
         if length <= 0 or length > MAX_BODY_BYTES:
             self._json(413, {"error": "request body is empty or too large"})
-            return
+            return None
         body = self.rfile.read(length)
         try:
             req = json.loads(body)
         except (json.JSONDecodeError, AttributeError):
             self._json(400, {"error": "invalid json"})
-            return
+            return None
 
         if not isinstance(req, dict):
             self._json(400, {"error": "request body must be a JSON object"})
-            return
+            return None
+        return req
 
-        if self.path == "/ner":
-            text = req.get("text", "")
-            if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
-                self._json(400, {"error": "text must be a string within the size limit"})
-                return
-            try:
-                spans = ner_spans(text)
-            except Exception as exc:  # noqa: BLE001
-                self._json(500, {"error": str(exc)})
-                return
-            self._json(200, {"spans": spans})
+    def _handle_ner(self, req):
+        text = req.get("text", "")
+        if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
+            self._json(400, {"error": "text must be a string within the size limit"})
             return
-
-        if self.path == "/ner/batch":
-            texts = req.get("texts")
-            if not isinstance(texts, list):
-                self._json(400, {"error": "texts must be a list"})
-                return
-            if not texts or len(texts) > MAX_BATCH:
-                self._json(400, {"error": "batch size must be between 1 and %d" % MAX_BATCH})
-                return
-            if any(not isinstance(text, str) or len(text.encode("utf-8")) > MAX_TEXT_BYTES for text in texts):
-                self._json(400, {"error": "every text must be a string within the size limit"})
-                return
-            t_start = time.perf_counter()
-            try:
-                results, map_ms = ner_batch(texts)
-            except Exception as exc:  # noqa: BLE001
-                self._json(500, {"error": str(exc)})
-                return
-            t_after_map = time.perf_counter()
-            ser_ms = (time.perf_counter() - t_after_map) * 1000
-            total_ms = (time.perf_counter() - t_start) * 1000
-            payload = {
-                "results": results,
-                "timing": {
-                    "map_ms": round(map_ms, 3),
-                    "ser_ms": round(ser_ms, 3),
-                    "total_ms": round(total_ms, 3),
-                },
-            }
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            sys.stderr.write(
-                "BATCH n=%d map=%.2fms ser=%.2fms total=%.2fms\n"
-                % (len(texts), map_ms, ser_ms, total_ms)
-            )
-            sys.stderr.flush()
-            self._json_bytes(200, data)
+        try:
+            spans = ner_spans(text)
+        except Exception as exc:  # noqa: BLE001
+            self._json(500, {"error": str(exc)})
             return
+        self._json(200, {"spans": spans})
 
-        self.send_error(404)
+    def _handle_batch(self, req):
+        texts = req.get("texts")
+        if not isinstance(texts, list):
+            self._json(400, {"error": "texts must be a list"})
+            return
+        if not texts or len(texts) > MAX_BATCH:
+            self._json(400, {"error": "batch size must be between 1 and %d" % MAX_BATCH})
+            return
+        if any(not isinstance(text, str) or len(text.encode("utf-8")) > MAX_TEXT_BYTES for text in texts):
+            self._json(400, {"error": "every text must be a string within the size limit"})
+            return
+        t_start = time.perf_counter()
+        try:
+            results, map_ms = ner_batch(texts)
+        except Exception as exc:  # noqa: BLE001
+            self._json(500, {"error": str(exc)})
+            return
+        t_after_map = time.perf_counter()
+        ser_ms = (time.perf_counter() - t_after_map) * 1000
+        total_ms = (time.perf_counter() - t_start) * 1000
+        payload = {
+            "results": results,
+            "timing": {
+                "map_ms": round(map_ms, 3),
+                "ser_ms": round(ser_ms, 3),
+                "total_ms": round(total_ms, 3),
+            },
+        }
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        sys.stderr.write(
+            "BATCH n=%d map=%.2fms ser=%.2fms total=%.2fms\n"
+            % (len(texts), map_ms, ser_ms, total_ms)
+        )
+        sys.stderr.flush()
+        self._json_bytes(200, data)
 
     def do_GET(self):
         if self.path == "/healthz":
