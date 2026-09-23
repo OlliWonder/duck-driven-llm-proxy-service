@@ -70,6 +70,19 @@ func skipSeparators(text string, from int) int {
 	return i
 }
 
+// skipPersonalFieldQualifier skips an optional owner between a field label
+// and its value, for example "гражданство клиента — РФ".
+func skipPersonalFieldQualifier(text, lowerText string, start int) int {
+	for _, qualifier := range []string{"клиента", "заявителя", "заёмщика", "заемщика", "владельца"} {
+		end := start + len(qualifier)
+		if end <= len(lowerText) && strings.HasPrefix(lowerText[start:], qualifier) &&
+			(end == len(lowerText) || !isWordByte(lowerText[end])) {
+			return skipSeparators(text, end)
+		}
+	}
+	return start
+}
+
 // isCyrillicLetter сообщает, является ли байт частью кириллической буквы
 // (первый байт 0xD0–0xD1 или второй байт 0x80–0xBF в UTF-8).
 func isCyrillicLetter(b byte) bool {
@@ -149,7 +162,7 @@ func scanTextValueKeepDot(text string, start int) (int, bool) {
 	i := start
 	for i < len(text) {
 		c := text[i]
-		if c == ',' || c == ';' || c == '\n' || c == '\r' {
+		if c == ',' || c == ';' || c == '\n' || c == '\r' || (c == '.' && !isAddressAbbreviationDot(text, i)) {
 			break
 		}
 		i++

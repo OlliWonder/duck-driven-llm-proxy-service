@@ -3,6 +3,7 @@ package detection
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 )
@@ -48,10 +49,24 @@ func scanDeptCode(text string, start int) (int, bool) {
 		}
 		i++
 	}
-	if i >= len(text) || (text[i] != '-' && text[i] != ' ') {
+	separatorStart := i
+	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
+		i++
+	}
+	if i < len(text) && text[i] == '-' {
+		i++
+		for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
+			i++
+		}
+	} else if strings.HasPrefix(text[i:], "–") || strings.HasPrefix(text[i:], "—") {
+		_, size := utf8.DecodeRuneInString(text[i:])
+		i += size
+		for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
+			i++
+		}
+	} else if i == separatorStart {
 		return 0, false
 	}
-	i++
 	for k := 0; k < 3; k++ {
 		if i >= len(text) || !isDigit(text[i]) {
 			return 0, false
@@ -66,7 +81,7 @@ func scanDeptCode(text string, start int) (int, bool) {
 
 // hasDeptCodeContext проверяет наличие слова "подразделение" рядом.
 func hasDeptCodeContext(text string, start int) bool {
-	window := windowBefore(text, start, 120)
+	window := contactClauseBefore(text, start, 120)
 	lower := strings.ToLower(window)
 	return strings.Contains(lower, "подразделен") ||
 		strings.Contains(lower, "код органа выдачи") ||

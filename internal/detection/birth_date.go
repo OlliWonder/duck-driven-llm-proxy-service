@@ -31,6 +31,9 @@ func (d *BirthDateDetector) Detect(_ context.Context, text string) ([]Fragment, 
 			continue
 		}
 		valStart := skipSeparators(text, labelEnd)
+		// Field labels are often followed by the subject before the actual
+		// value: "дата рождения клиента — 15.03.1990".
+		valStart = skipPersonalFieldQualifier(text, lowerText, valStart)
 		valEnd, ok := scanDate(text, valStart)
 		if !ok {
 			valEnd, ok = scanTextDate(text, valStart)

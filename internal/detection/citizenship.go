@@ -27,6 +27,7 @@ func (d *CitizenshipDetector) Detect(_ context.Context, text string) ([]Fragment
 			break
 		}
 		valStart := skipSeparators(text, labelEnd)
+		valStart = skipPersonalFieldQualifier(text, lowerText, valStart)
 		valEnd, ok := scanTextValue(text, valStart)
 		if ok && plausibleCitizenship(text[valStart:valEnd]) {
 			frags = append(frags, Fragment{Type: pii.TypeCitizenship, Start: valStart, End: valEnd})

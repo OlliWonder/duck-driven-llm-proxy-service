@@ -152,7 +152,12 @@ func scanTenDigitPhone(text string, start int) (int, bool) {
 }
 
 func hasPhoneContext(text string, start int) bool {
-	lower := strings.ToLower(windowBefore(text, start, 80))
+	rawWindow := strings.ToLower(windowBefore(text, start, 80))
+	immediate := strings.TrimRight(rawWindow, " \t:=-–—")
+	if strings.HasSuffix(immediate, "тел.") {
+		return true
+	}
+	lower := strings.ToLower(contactClauseBefore(text, start, 80))
 	for _, marker := range []string{"тел", "мобильн", "номер клиента", "phone", "контакт"} {
 		if strings.Contains(lower, marker) {
 			return true
@@ -162,6 +167,6 @@ func hasPhoneContext(text string, start int) bool {
 }
 
 func hasNonPhoneNumericContext(text string, start int) bool {
-	lower := strings.ToLower(windowBefore(text, start, 32))
+	lower := strings.ToLower(contactClauseBefore(text, start, 32))
 	return strings.Contains(lower, "инн") && !hasPhoneContext(text, start)
 }

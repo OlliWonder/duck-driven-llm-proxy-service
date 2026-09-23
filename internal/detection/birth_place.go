@@ -31,6 +31,7 @@ func (d *BirthPlaceDetector) Detect(_ context.Context, text string) ([]Fragment,
 			continue
 		}
 		valStart := skipSeparators(text, labelEnd)
+		valStart = skipPersonalFieldQualifier(text, lowerText, valStart)
 		valEnd, ok := scanTextValueKeepDot(text, valStart)
 		if ok {
 			frags = append(frags, Fragment{Type: pii.TypeBirthPlace, Start: valStart, End: valEnd})
