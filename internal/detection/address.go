@@ -9,7 +9,7 @@ import (
 
 // addressLabels — подписи поля «адрес».
 var addressLabels = []string{
-	"почтовый адрес физлица", "адрес доставки клиента", "клиент живёт по адресу", "клиент живет по адресу",
+	"фактический адрес проживания клиента", "адрес проживания клиента", "новый адрес доставки", "почтовый адрес физлица", "адрес доставки клиента", "адрес доставки", "клиент живёт по адресу", "клиент живет по адресу",
 	"проживает по адресу", "адрес регистрации", "адрес проживания", "адрес клиента",
 	"зарегистрирована", "зарегистрирован", "проживает", "адрес",
 }
@@ -41,7 +41,7 @@ func (d *AddressDetector) Detect(_ context.Context, text string) ([]Fragment, er
 		}
 		valStart := skipSeparators(text, labelEnd)
 		valEnd, ok := scanAddressValue(text, valStart)
-		if ok {
+		if ok && plausibleAddressValue(text[valStart:valEnd]) {
 			frags = append(frags, Fragment{Type: pii.TypeAddress, Start: valStart, End: valEnd})
 			from = valEnd
 		} else {
@@ -54,6 +54,7 @@ func (d *AddressDetector) Detect(_ context.Context, text string) ([]Fragment, er
 // nonPIIAddressContexts — слова, следующие за подписью «адрес», которые
 // указывают на адрес организации (не ПДН), а не на адрес человека.
 var nonPIIAddressContexts = []string{
+	"электронной почты", "электронной почты клиента", "e-mail", "email",
 	"публичной площадки", "площадки",
 	"отделения банка", "отделения", "отделение банка", "отделение",
 	"офиса", "офис", "компании", "организации", "банка", "филиала",
@@ -69,6 +70,12 @@ func hasIPAddressPrefix(lowerText string, labelEnd int) bool {
 // isNonPIIAddressContext проверяет, что сразу после подписи «адрес» идёт
 // контекст организации (не ПДН).
 func isNonPIIAddressContext(lowerText string, labelEnd int) bool {
+	// "отделение банка, расположенное по адресу: ..." names a public
+	// organization location; the owner appears before the generic label.
+	before := contactClauseBefore(lowerText, labelEnd, 160)
+	if strings.Contains(before, "отделение банка") && strings.Contains(before, "располож") {
+		return true
+	}
 	// Пропускаем разделители.
 	i := labelEnd
 	for i < len(lowerText) && (lowerText[i] == ' ' || lowerText[i] == ':' || lowerText[i] == '-' || lowerText[i] == '\t') {
@@ -80,4 +87,23 @@ func isNonPIIAddressContext(lowerText string, labelEnd int) bool {
 		}
 	}
 	return false
+}
+
+func plausibleAddressValue(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	// These are references to an address or service prose, not an address
+	// value. Keeping this check on phrases/classes avoids evaluation literals.
+	for _, marker := range []string{
+		"электронной почты", "email", "e-mail", "совпадает", "менять", "изменить",
+		"не требуется", "является публичным", "доставки новой карты", "доставки карты", "новой карты",
+		"не указан", "неизвестен", "отсутствует", "уточняется", "уточнить", "будет предоставлен",
+	} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	return true
 }

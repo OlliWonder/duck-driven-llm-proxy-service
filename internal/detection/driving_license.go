@@ -40,8 +40,13 @@ func (d *DrivingLicenseDetector) Detect(_ context.Context, text string) ([]Fragm
 
 // hasDrivingLicenseContext проверяет наличие контекстного слова рядом с числом.
 func hasDrivingLicenseContext(text string, start int) bool {
-	window := windowBefore(text, start, 96)
+	window := contactClauseBefore(text, start, 96)
 	lower := strings.ToLower(window)
+	for _, nonDocument := range []string{"права доступа", "авторские права", "права пользователя"} {
+		if strings.Contains(lower, nonDocument) {
+			return false
+		}
+	}
 	drivingPos := maxLastIndex(lower, "водительск", "удостоверение водителя", "права", "driver license", " ву", "ву:", "ву ")
 	passportPos := maxLastIndex(lower, "паспорт", "серия")
 	return drivingPos >= 0 && drivingPos > passportPos

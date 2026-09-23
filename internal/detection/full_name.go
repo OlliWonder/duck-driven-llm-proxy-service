@@ -34,8 +34,9 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 			break
 		}
 		valStart := fullNameValueStart(text, labelEnd)
-		// "имя держателя" belongs to the more specific card-holder detector.
-		if strings.HasPrefix(lowerText[valStart:], "держателя") {
+		// A role or card owner between the generic "имя" label and the
+		// delimiter belongs to another entity/type, not to the client name.
+		if hasNonPersonalNameFieldOwner(lowerText[labelEnd:valStart]) {
 			from = labelEnd + 1
 			continue
 		}
@@ -48,6 +49,18 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 		}
 	}
 	return frags, nil
+}
+
+func hasNonPersonalNameFieldOwner(owner string) bool {
+	for _, marker := range []string{
+		"держател", "владелец карты", "владельца карты",
+		"писател", "поэт", "актёр", "актер", "певец", "режисс", "художник", "композитор",
+	} {
+		if strings.Contains(owner, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // scanFullName извлекает 1–4 слова (в любом регистре), начиная с start.

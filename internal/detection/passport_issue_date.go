@@ -8,7 +8,7 @@ import (
 )
 
 // passportIssueDateLabels — подписи поля «дата выдачи паспорта».
-var passportIssueDateLabels = []string{"дата выдачи", "выдано", "выдан"}
+var passportIssueDateLabels = []string{"дата выдачи паспорта", "дата выдачи документа", "дата выдачи", "выдано", "выдан"}
 
 // PassportIssueDateDetector находит дату выдачи паспорта.
 type PassportIssueDateDetector struct{}
@@ -46,7 +46,7 @@ func (d *PassportIssueDateDetector) Detect(_ context.Context, text string) ([]Fr
 }
 
 func hasNonDocumentIssueContext(lowerText string, labelEnd int) bool {
-	window := windowBefore(lowerText, labelEnd, 80)
+	window := contactClauseBefore(lowerText, labelEnd, 80)
 	for _, word := range []string{"товар", "заказ", "задани", "инвентарь", "приз"} {
 		if strings.Contains(window, word) {
 			return true

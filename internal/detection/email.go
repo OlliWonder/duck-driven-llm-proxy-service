@@ -37,7 +37,9 @@ func validEmailCandidate(text string, start, end int) bool {
 	if start > 0 && (isWordByte(text[start-1]) || text[start-1] == '.') {
 		return false
 	}
-	if end < len(text) && (isWordByte(text[end]) || text[end] == '.') {
+	// A dot immediately after a complete address is normal sentence
+	// punctuation. The regexp already consumes dots that belong to the domain.
+	if end < len(text) && isWordByte(text[end]) {
 		return false
 	}
 	parts := strings.Split(text[start:end], "@")

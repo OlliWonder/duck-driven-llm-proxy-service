@@ -8,7 +8,7 @@ import (
 )
 
 // cvvLabels — подписи поля «CVV-код».
-var cvvLabels = []string{"код безопасности карты", "код безопасности", "код cvv", "cvv код", "cvv2", "cvc", "cid карты amex", "cid", "cvv"}
+var cvvLabels = []string{"код безопасности карты", "код безопасности", "код cvv карты", "cvv карты", "код cvv", "cvv код", "cvv2", "cvc2", "cvc", "cid карты amex", "cid", "cvv"}
 
 // CVVDetector находит CVV-код карты в подписанных полях.
 //

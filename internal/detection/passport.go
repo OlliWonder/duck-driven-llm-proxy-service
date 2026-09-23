@@ -104,7 +104,7 @@ func scanSeriesNumber(text string, start int) (int, bool) {
 // "паспорт" или "серия".
 func hasPassportContext(text string, start int) bool {
 	// Ищем в окне до 96 байт перед числом.
-	window := windowBefore(text, start, 96)
+	window := contactClauseBefore(text, start, 96)
 	lower := strings.ToLower(window)
 	for _, nonDocument := range []string{"серия книги", "серия товара", "серия модели", "серия выпуска"} {
 		if strings.Contains(lower, nonDocument) {

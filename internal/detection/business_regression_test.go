@@ -117,6 +117,228 @@ func TestBusinessPassportAllZeroSeries(t *testing.T) {
 	}
 }
 
+func TestBusinessReportedPIIRegressions(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		det  Detector
+		text string
+		want []Fragment
+	}{
+		{
+			name: "birth date with client qualifier",
+			det:  NewBirthDateDetector(),
+			text: "Дата рождения клиента — 15.03.1990",
+			want: []Fragment{span("Дата рождения клиента — 15.03.1990", "15.03.1990", pii.TypeBirthDate)},
+		},
+		{
+			name: "passport issuer after issue date",
+			det:  NewPassportIssuerDetector(),
+			text: "паспорт выдан 18.07.2015 Отделом УФМС России по Самарской области, код подразделения 630-004",
+			want: []Fragment{span(
+				"паспорт выдан 18.07.2015 Отделом УФМС России по Самарской области, код подразделения 630-004",
+				"Отделом УФМС России по Самарской области", pii.TypePassportIssuer,
+			)},
+		},
+		{
+			name: "full card holder label",
+			det:  NewCardHolderDetector(),
+			text: "Имя держателя карты: ALEXANDER IVANOV",
+			want: []Fragment{span("Имя держателя карты: ALEXANDER IVANOV", "ALEXANDER IVANOV", pii.TypeCardHolder)},
+		},
+		{name: "email label is not address", det: NewAddressDetector(), text: "Адрес электронной почты: alexander.ivanov@example.com", want: nil},
+		{name: "registration reference", det: NewAddressDetector(), text: "Адрес регистрации совпадает с фактическим", want: nil},
+		{name: "registration service prose", det: NewAddressDetector(), text: "основной адрес регистрации менять не требуется", want: nil},
+		{name: "delivery service prose", det: NewAddressDetector(), text: "хочет изменить адрес доставки новой карты", want: nil},
+		{name: "public address reference", det: NewAddressDetector(), text: "Этот адрес является публичным адресом отделения банка", want: nil},
+		{name: "public bank branch", det: NewAddressDetector(), text: "отделение банка, расположенное по адресу: г. Тольятти, ул. Юбилейная, д. 31Г", want: nil},
+		{
+			name: "public branch in previous sentence does not hide personal address",
+			det:  NewAddressDetector(),
+			text: "Отделение банка расположено рядом. Адрес клиента: г. Самара, ул. Ленина, д. 1",
+			want: []Fragment{span(
+				"Отделение банка расположено рядом. Адрес клиента: г. Самара, ул. Ленина, д. 1",
+				"г. Самара, ул. Ленина, д. 1", pii.TypeAddress,
+			)},
+		},
+		{
+			name: "personal residence value only",
+			det:  NewAddressDetector(),
+			text: "Фактический адрес проживания клиента: Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47",
+			want: []Fragment{span(
+				"Фактический адрес проживания клиента: Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47",
+				"Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47", pii.TypeAddress,
+			)},
+		},
+		{
+			name: "new delivery value only",
+			det:  NewAddressDetector(),
+			text: "Новый адрес доставки: г. Казань, ул. Чистопольская, д. 18, кв. 92",
+			want: []Fragment{span(
+				"Новый адрес доставки: г. Казань, ул. Чистопольская, д. 18, кв. 92",
+				"г. Казань, ул. Чистопольская, д. 18, кв. 92", pii.TypeAddress,
+			)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.det.Detect(ctx, tt.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fragmentsEqual(got, tt.want) {
+				t.Fatalf("got %+v (%q), want %+v", got, fragmentsText(tt.text, got), tt.want)
+			}
+		})
+	}
+}
+
+func TestBusinessRepeatedEmailSurvivesCompositeOverlap(t *testing.T) {
+	text := "Адрес электронной почты: alexander.ivanov@example.com. Продублировать на alexander.ivanov@example.com."
+	direct, directErr := NewEmailDetector().Detect(context.Background(), text)
+	if directErr != nil || len(direct) != 2 {
+		t.Fatalf("direct email detector got %+v, err=%v", direct, directErr)
+	}
+	got, err := NewRuleBasedDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var emails []Fragment
+	for _, fragment := range got {
+		if fragment.Type == pii.TypeEmail {
+			emails = append(emails, fragment)
+		}
+	}
+	if len(emails) != 2 {
+		t.Fatalf("got %d email fragments (%q), want two complete emails; all=%+v", len(emails), fragmentsText(text, emails), got)
+	}
+	for _, fragment := range emails {
+		if text[fragment.Start:fragment.End] != "alexander.ivanov@example.com" {
+			t.Fatalf("partial email span %q", text[fragment.Start:fragment.End])
+		}
+	}
+}
+
+func TestBusinessUnusualDetectionBoundaries(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		det  Detector
+		text string
+		want []Fragment
+	}{
+		{
+			name: "birth place qualifier and sentence boundary",
+			det:  NewBirthPlaceDetector(),
+			text: "Место рождения клиента — г. Омск. Гражданство: РФ.",
+			want: []Fragment{span("Место рождения клиента — г. Омск. Гражданство: РФ.", "г. Омск", pii.TypeBirthPlace)},
+		},
+		{
+			name: "citizenship qualifier",
+			det:  NewCitizenshipDetector(),
+			text: "Гражданство клиента — Российская Федерация.",
+			want: []Fragment{span("Гражданство клиента — Российская Федерация.", "Российская Федерация", pii.TypeCitizenship)},
+		},
+		{
+			name: "issuer sentence boundary",
+			det:  NewPassportIssuerDetector(),
+			text: "Кем выдан: ОУФМС России по г. Москве. Код подразделения: 770-001.",
+			want: []Fragment{span(
+				"Кем выдан: ОУФМС России по г. Москве. Код подразделения: 770-001.",
+				"ОУФМС России по г. Москве", pii.TypePassportIssuer,
+			)},
+		},
+		{name: "non document issuer", det: NewPassportIssuerDetector(), text: "Заказ выдан отделом продаж.", want: nil},
+		{name: "missing address", det: NewAddressDetector(), text: "Адрес клиента: не указан.", want: nil},
+		{name: "pending address", det: NewAddressDetector(), text: "Адрес проживания уточняется.", want: nil},
+		{
+			name: "department code spaced dash",
+			det:  NewPassportDeptCodeDetector(),
+			text: "код подразделения 630 - 004",
+			want: []Fragment{span("код подразделения 630 - 004", "630 - 004", pii.TypePassportDeptCode)},
+		},
+		{name: "passport context does not cross sentence", det: NewPassportDetector(), text: "Паспорт проверен. Значение 4509 123456 относится к заявке.", want: nil},
+		{name: "license context does not cross sentence", det: NewDrivingLicenseDetector(), text: "Водительское удостоверение проверено. Значение 6312 345678 относится к заявке.", want: nil},
+		{name: "department context does not cross sentence", det: NewPassportDeptCodeDetector(), text: "Код подразделения проверен. Значение 630-004 относится к заявке.", want: nil},
+		{name: "phone context does not cross sentence", det: NewPhoneDetector(), text: "Телефон уточнён. Значение 9271234567 относится к заявке.", want: nil},
+		{
+			name: "cvv card qualifier",
+			det:  NewCVVDetector(),
+			text: "CVV карты: 123",
+			want: []Fragment{span("CVV карты: 123", "123", pii.TypeCVV)},
+		},
+		{
+			name: "cvc2",
+			det:  NewCVVDetector(),
+			text: "CVC2: 987",
+			want: []Fragment{span("CVC2: 987", "987", pii.TypeCVV)},
+		},
+		{
+			name: "pin card qualifier",
+			det:  NewPINDetector(),
+			text: "PIN карты: 4827",
+			want: []Fragment{span("PIN карты: 4827", "4827", pii.TypePIN)},
+		},
+		{
+			name: "passport issue date full label",
+			det:  NewPassportIssueDateDetector(),
+			text: "Дата выдачи паспорта: 18.07.2015",
+			want: []Fragment{span("Дата выдачи паспорта: 18.07.2015", "18.07.2015", pii.TypePassportIssueDate)},
+		},
+		{
+			name: "passport issuer full label",
+			det:  NewPassportIssuerDetector(),
+			text: "Кем выдан паспорт: МВД России по г. Казани",
+			want: []Fragment{span("Кем выдан паспорт: МВД России по г. Казани", "МВД России по г. Казани", pii.TypePassportIssuer)},
+		},
+		{
+			name: "card holder owner label",
+			det:  NewCardHolderDetector(),
+			text: "Имя владельца карты: IVAN PETROV",
+			want: []Fragment{span("Имя владельца карты: IVAN PETROV", "IVAN PETROV", pii.TypeCardHolder)},
+		},
+		{
+			name: "combined security code label",
+			det:  NewCVVDetector(),
+			text: "CVV/CVC2: 123",
+			want: []Fragment{span("CVV/CVC2: 123", "123", pii.TypeCVV)},
+		},
+		{
+			name: "abbreviated phone label",
+			det:  NewPhoneDetector(),
+			text: "Тел.: 9271234567",
+			want: []Fragment{span("Тел.: 9271234567", "9271234567", pii.TypePhone)},
+		},
+		{
+			name: "department code unicode dash",
+			det:  NewPassportDeptCodeDetector(),
+			text: "код подразделения 630–004",
+			want: []Fragment{span("код подразделения 630–004", "630–004", pii.TypePassportDeptCode)},
+		},
+		{
+			name: "previous service sentence does not suppress issue date",
+			det:  NewPassportIssueDateDetector(),
+			text: "Товар возвращён. Дата выдачи паспорта: 18.07.2015.",
+			want: []Fragment{span("Товар возвращён. Дата выдачи паспорта: 18.07.2015.", "18.07.2015", pii.TypePassportIssueDate)},
+		},
+		{name: "access rights are not driving license", det: NewDrivingLicenseDetector(), text: "Права доступа: значение 6312 345678.", want: nil},
+		{name: "public person's labeled name", det: NewFullNameDetector(), text: "Имя писателя: Лев Толстой.", want: nil},
+		{name: "card holder is not generic full name", det: NewFullNameDetector(), text: "Имя держателя карты: IVAN PETROV", want: nil},
+		{name: "address instruction", det: NewAddressDetector(), text: "Адрес клиента: уточнить у оператора.", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.det.Detect(ctx, tt.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fragmentsEqual(got, tt.want) {
+				t.Fatalf("got %+v (%q), want %+v", got, fragmentsText(tt.text, got), tt.want)
+			}
+		})
+	}
+}
+
 func fragmentsText(text string, fragments []Fragment) string {
 	values := make([]byte, 0)
 	for i, fragment := range fragments {
