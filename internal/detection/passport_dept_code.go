@@ -81,9 +81,10 @@ func scanDeptCode(text string, start int) (int, bool) {
 
 // hasDeptCodeContext проверяет наличие слова "подразделение" рядом.
 func hasDeptCodeContext(text string, start int) bool {
-	window := contactClauseBefore(text, start, 120)
+	window := contactClauseBefore(text, start, 192)
 	lower := strings.ToLower(window)
 	return strings.Contains(lower, "подразделен") ||
+		strings.Contains(lower, "кп документа") ||
 		strings.Contains(lower, "код органа выдачи") ||
 		strings.Contains(lower, "department code") ||
 		(strings.Contains(lower, "паспорт") && strings.Contains(lower, "код"))

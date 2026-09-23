@@ -53,7 +53,7 @@ func (d *CardNumberDetector) Detect(_ context.Context, text string) ([]Fragment,
 			// Границы слова.
 			if (i == 0 || !isWordByte(text[i-1])) && (j == len(text) || !isWordByte(text[j])) {
 				digitsStr := digitsOnly(text[i:j])
-				if luhnValid(digitsStr) {
+				if luhnValid(digitsStr) && !isExplicitExampleContext(text, i, j) {
 					frags = append(frags, Fragment{Type: pii.TypeCardNumber, Start: i, End: j})
 				}
 			}

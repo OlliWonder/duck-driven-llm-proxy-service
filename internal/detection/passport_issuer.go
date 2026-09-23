@@ -9,7 +9,7 @@ import (
 
 // passportIssuerLabels — подписи поля «орган, выдавший паспорт».
 var passportIssuerLabels = []string{
-	"орган, выдавший документ", "орган, выдавший паспорт", "кем выдан паспорт", "орган выдачи паспорта", "паспорт выдал", "кем выдан", "орган выдачи",
+	"орган, выдавший документ", "орган, выдавший паспорт", "кем выдан паспорт", "орган выдачи паспорта", "issuer паспорта", "паспорт выдал", "кем выдан", "орган выдачи",
 }
 
 // PassportIssuerDetector находит орган, выдавший паспорт.
@@ -30,6 +30,7 @@ func (d *PassportIssuerDetector) Detect(_ context.Context, text string) ([]Fragm
 		}
 		valStart := skipSeparators(text, labelEnd)
 		valEnd, ok := scanTextValueKeepDot(text, valStart)
+		valEnd = trimIssuerBeforeDate(text, valStart, valEnd)
 		if ok && plausiblePassportIssuer(text[valStart:valEnd]) {
 			frags = append(frags, Fragment{Type: pii.TypePassportIssuer, Start: valStart, End: valEnd})
 			from = valEnd
@@ -66,12 +67,36 @@ func (d *PassportIssuerDetector) Detect(_ context.Context, text string) ([]Fragm
 			valStart = skipSeparators(text, dateEnd)
 		}
 		valEnd, ok := scanTextValueKeepDot(text, valStart)
+		valEnd = trimIssuerBeforeDate(text, valStart, valEnd)
 		if ok && looksLikePassportIssuer(text[valStart:valEnd]) &&
 			(hasPassportIssuerContext(lowerText, wordStart) || looksLikeOfficialPassportAuthority(text[valStart:valEnd])) {
 			frags = append(frags, Fragment{Type: pii.TypePassportIssuer, Start: valStart, End: valEnd})
 		}
 	}
 	return Merge(frags), nil
+}
+
+func trimIssuerBeforeDate(text string, start, scannedEnd int) int {
+	if scannedEnd <= start {
+		return scannedEnd
+	}
+	limit := scannedEnd + 16
+	if limit > len(text) {
+		limit = len(text)
+	}
+	for i := start; i < limit; i++ {
+		if !isDigit(text[i]) {
+			continue
+		}
+		if _, ok := scanDate(text, i); ok {
+			end := i
+			for end > start && (text[end-1] == ' ' || text[end-1] == '\t') {
+				end--
+			}
+			return end
+		}
+	}
+	return scannedEnd
 }
 
 func hasPassportIssuerContext(lowerText string, end int) bool {

@@ -8,7 +8,7 @@ import (
 )
 
 // cvvLabels — подписи поля «CVV-код».
-var cvvLabels = []string{"код безопасности карты", "код безопасности", "код cvv карты", "cvv карты", "код cvv", "cvv код", "cvv2", "cvc2", "cvc", "cid карты amex", "cid", "cvv"}
+var cvvLabels = []string{"в поле cvv указано", "код cvv клиента", "код безопасности карты", "код безопасности", "код cvv карты", "cvv карты", "код cvv", "cvv код", "cvv2", "cvc2", "cvc", "cid карты amex", "cid", "cvv"}
 
 // CVVDetector находит CVV-код карты в подписанных полях.
 //
@@ -33,7 +33,7 @@ func (d *CVVDetector) Detect(_ context.Context, text string) ([]Fragment, error)
 		valEnd, ok := scanDigits(text, valStart)
 		if ok {
 			n := valEnd - valStart
-			if n == 3 || n == 4 {
+			if (n == 3 || n == 4) && !isExplicitExampleContext(text, valStart, valEnd) {
 				frags = append(frags, Fragment{Type: pii.TypeCVV, Start: valStart, End: valEnd})
 				from = valEnd
 				continue

@@ -8,7 +8,7 @@ import (
 )
 
 // birthPlaceLabels — подписи поля «место рождения».
-var birthPlaceLabels = []string{"место рождения", "родился в", "родилась в", "уроженец", "уроженка"}
+var birthPlaceLabels = []string{"сведения о рождении", "место рождения", "родился в", "родилась в", "уроженец", "уроженка"}
 
 // BirthPlaceDetector находит место рождения в подписанных полях.
 type BirthPlaceDetector struct{}

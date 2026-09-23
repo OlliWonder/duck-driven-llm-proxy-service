@@ -8,7 +8,7 @@ import (
 )
 
 // birthDateLabels — подписи поля «дата рождения».
-var birthDateLabels = []string{"дата рождения", "д.р.", "родился", "родилась"}
+var birthDateLabels = []string{"дата рождения", "дату рождения", "д.р.", "родился", "родилась", "рождён", "рожден", "dob"}
 
 // BirthDateDetector находит дату рождения в подписанных полях.
 type BirthDateDetector struct{}

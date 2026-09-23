@@ -8,7 +8,7 @@ import (
 )
 
 // citizenshipLabels — подписи поля «гражданство».
-var citizenshipLabels = []string{"гражданство", "гражданин", "гражданка", "подданство", "nationality"}
+var citizenshipLabels = []string{"сведения о гражданстве клиента", "сведения о гражданстве", "гражданство", "гражданин", "гражданка", "подданство", "nationality"}
 
 // CitizenshipDetector находит гражданство в подписанных полях.
 type CitizenshipDetector struct{}

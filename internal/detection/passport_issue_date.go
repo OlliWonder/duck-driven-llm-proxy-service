@@ -8,7 +8,7 @@ import (
 )
 
 // passportIssueDateLabels — подписи поля «дата выдачи паспорта».
-var passportIssueDateLabels = []string{"дата выдачи паспорта", "дата выдачи документа", "дата выдачи", "выдано", "выдан"}
+var passportIssueDateLabels = []string{"дата оформления паспорта", "дата выдачи паспорта", "дата выдачи документа", "дата выдачи", "выдано", "выдан"}
 
 // PassportIssueDateDetector находит дату выдачи паспорта.
 type PassportIssueDateDetector struct{}
@@ -42,7 +42,26 @@ func (d *PassportIssueDateDetector) Detect(_ context.Context, text string) ([]Fr
 			from = labelEnd + 1
 		}
 	}
-	return frags, nil
+	// In natural passport prose the authority may stand between "выдан" and
+	// the date. Recognise that date while keeping the requirement that both
+	// passport and issue context are present in the same clause.
+	for i := 0; i < len(text); i++ {
+		if !isDigit(text[i]) {
+			continue
+		}
+		dateEnd, ok := scanDate(text, i)
+		if !ok || !hasPassportIssueDateContext(text, i) {
+			continue
+		}
+		frags = append(frags, Fragment{Type: pii.TypePassportIssueDate, Start: i, End: dateEnd})
+		i = dateEnd - 1
+	}
+	return Merge(frags), nil
+}
+
+func hasPassportIssueDateContext(text string, dateStart int) bool {
+	before := strings.ToLower(contactClauseBefore(text, dateStart, 256))
+	return strings.Contains(before, "паспорт") && strings.Contains(before, "выдан")
 }
 
 func hasNonDocumentIssueContext(lowerText string, labelEnd int) bool {

@@ -349,3 +349,103 @@ func fragmentsText(text string, fragments []Fragment) string {
 	}
 	return string(values)
 }
+
+func TestRunnerRequiredRuleRegressions(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		det  Detector
+		text string
+		want []Fragment
+	}{
+		{name: "born label", det: NewBirthDateDetector(), text: "В анкете указано: рождён 15.03.1990.", want: []Fragment{span("В анкете указано: рождён 15.03.1990.", "15.03.1990", pii.TypeBirthDate)}},
+		{name: "dob label", det: NewBirthDateDetector(), text: "DOB клиента: 01/12/1988.", want: []Fragment{span("DOB клиента: 01/12/1988.", "01/12/1988", pii.TypeBirthDate)}},
+		{name: "numeric text date", det: NewBirthDateDetector(), text: "Заемщик сообщил дату рождения 5 мая 1985.", want: []Fragment{span("Заемщик сообщил дату рождения 5 мая 1985.", "5 мая 1985", pii.TypeBirthDate)}},
+		{name: "quoted birth place", det: NewBirthPlaceDetector(), text: "Поле «место рождения»: г. Самара.", want: []Fragment{span("Поле «место рождения»: г. Самара.", "г. Самара", pii.TypeBirthPlace)}},
+		{name: "birth information", det: NewBirthPlaceDetector(), text: "Сведения о рождении: город Казань.", want: []Fragment{span("Сведения о рождении: город Казань.", "город Казань", pii.TypeBirthPlace)}},
+		{name: "citizenship information", det: NewCitizenshipDetector(), text: "Сведения о гражданстве клиента: Российская Федерация.", want: []Fragment{span("Сведения о гражданстве клиента: Российская Федерация.", "Российская Федерация", pii.TypeCitizenship)}},
+		{name: "issuer latin label", det: NewPassportIssuerDetector(), text: "issuer паспорта: Отделом УФМС России по Самарской области.", want: []Fragment{span("issuer паспорта: Отделом УФМС России по Самарской области.", "Отделом УФМС России по Самарской области", pii.TypePassportIssuer)}},
+		{name: "quoted issuer label", det: NewPassportIssuerDetector(), text: "В анкете поле «кем выдан»: ГУ МВД России по г. Москве.", want: []Fragment{span("В анкете поле «кем выдан»: ГУ МВД России по г. Москве.", "ГУ МВД России по г. Москве", pii.TypePassportIssuer)}},
+		{name: "short department label", det: NewPassportDeptCodeDetector(), text: "КП документа: 630-004.", want: []Fragment{span("КП документа: 630-004.", "630-004", pii.TypePassportDeptCode)}},
+		{name: "quoted issue date", det: NewPassportIssueDateDetector(), text: "Поле «дата выдачи»: 03.11.2020.", want: []Fragment{span("Поле «дата выдачи»: 03.11.2020.", "03.11.2020", pii.TypePassportIssueDate)}},
+		{name: " оформления date", det: NewPassportIssueDateDetector(), text: "Дата оформления паспорта: 18.07.2015.", want: []Fragment{span("Дата оформления паспорта: 18.07.2015.", "18.07.2015", pii.TypePassportIssueDate)}},
+		{name: "short license label", det: NewDrivingLicenseDetector(), text: "В/У: 63 12 345678.", want: []Fragment{span("В/У: 63 12 345678.", "63 12 345678", pii.TypeDrivingLicense)}},
+		{name: "delivery address", det: NewAddressDetector(), text: "Доставка клиенту по адресу: г. Москва, Ленинградский проспект, д. 10, кв. 15.", want: []Fragment{span("Доставка клиенту по адресу: г. Москва, Ленинградский проспект, д. 10, кв. 15.", "г. Москва, Ленинградский проспект, д. 10, кв. 15", pii.TypeAddress)}},
+		{name: "factual residence", det: NewAddressDetector(), text: "Фактическое место проживания — Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47.", want: []Fragment{span("Фактическое место проживания — Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47.", "Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47", pii.TypeAddress)}},
+		{name: "registration place", det: NewAddressDetector(), text: "Место регистрации клиента: г. Москва, Ленинградский проспект, д. 10, кв. 15.", want: []Fragment{span("Место регистрации клиента: г. Москва, Ленинградский проспект, д. 10, кв. 15.", "г. Москва, Ленинградский проспект, д. 10, кв. 15", pii.TypeAddress)}},
+		{name: "cvv client", det: NewCVVDetector(), text: "Код CVV клиента 123.", want: []Fragment{span("Код CVV клиента 123.", "123", pii.TypeCVV)}},
+		{name: "cvv field", det: NewCVVDetector(), text: "В поле CVV указано 123.", want: []Fragment{span("В поле CVV указано 123.", "123", pii.TypeCVV)}},
+		{name: "pin client", det: NewPINDetector(), text: "ПИН-код клиента 4827.", want: []Fragment{span("ПИН-код клиента 4827.", "4827", pii.TypePIN)}},
+		{name: "pin field", det: NewPINDetector(), text: "В поле PIN указано 0194.", want: []Fragment{span("В поле PIN указано 0194.", "0194", pii.TypePIN)}},
+		{name: "pin code client", det: NewPINDetector(), text: "Код PIN клиента: 4827.", want: []Fragment{span("Код PIN клиента: 4827.", "4827", pii.TypePIN)}},
+		{name: "holder snake label", det: NewCardHolderDetector(), text: "card_holder=ALEXANDER IVANOV.", want: []Fragment{span("card_holder=ALEXANDER IVANOV.", "ALEXANDER IVANOV", pii.TypeCardHolder)}},
+		{name: "holder phrase", det: NewCardHolderDetector(), text: "На карте указано имя MARIA SOKOLOVA.", want: []Fragment{span("На карте указано имя MARIA SOKOLOVA.", "MARIA SOKOLOVA", pii.TypeCardHolder)}},
+		{name: "holder bank card", det: NewCardHolderDetector(), text: "Имя на банковской карте: MARIA SOKOLOVA.", want: []Fragment{span("Имя на банковской карте: MARIA SOKOLOVA.", "MARIA SOKOLOVA", pii.TypeCardHolder)}},
+		{name: "holder english name", det: NewCardHolderDetector(), text: "Cardholder name: MARIA SOKOLOVA.", want: []Fragment{span("Cardholder name: MARIA SOKOLOVA.", "MARIA SOKOLOVA", pii.TypeCardHolder)}},
+		{name: "store phone", det: NewPhoneDetector(), text: "Контактный телефон магазина: +7 495 000-11-22.", want: nil},
+		{name: "restaurant phone", det: NewPhoneDetector(), text: "Телефон ресторана +7 846 222-33-44 указан на сайте.", want: nil},
+		{name: "sales mailbox", det: NewEmailDetector(), text: "Почта отдела продаж: sales@example.org.", want: nil},
+		{name: "press mailbox", det: NewEmailDetector(), text: "Email пресс-службы press@example.org опубликован на сайте.", want: nil},
+		{name: "example card", det: NewCardNumberDetector(), text: "Номер 4111 1111 1111 1111 приведён как общеизвестный тестовый номер карты.", want: nil},
+		{name: "example cvv", det: NewCVVDetector(), text: "CVV 123 указан исключительно как пример в инструкции.", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.det.Detect(ctx, tt.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fragmentsEqual(got, tt.want) {
+				t.Fatalf("got %+v (%q), want %+v", got, fragmentsText(tt.text, got), tt.want)
+			}
+		})
+	}
+}
+
+func TestRunnerMixedFieldBoundaries(t *testing.T) {
+	text := "Паспорт серия 4510 номер 654321, выдан Отделом УФМС России по Самарской области 18.07.2015, код 630-004."
+	got, err := NewRuleBasedDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for typ, value := range map[pii.Type]string{
+		pii.TypePassportSeries:    "4510 номер 654321",
+		pii.TypePassportIssuer:    "Отделом УФМС России по Самарской области",
+		pii.TypePassportIssueDate: "18.07.2015",
+		pii.TypePassportDeptCode:  "630-004",
+	} {
+		found := false
+		for _, fragment := range got {
+			if fragment.Type == typ && text[fragment.Start:fragment.End] == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s=%q in %+v (%q)", typ, value, got, fragmentsText(text, got))
+		}
+	}
+}
+
+func TestRunnerAddressStopsBeforeFollowingCard(t *testing.T) {
+	text := "Клиент подтвердил адрес проживания г. Москва, Ленинградский проспект, д. 10, кв. 15 и номер карты 5555 5555 5555 4444."
+	got, err := NewRuleBasedDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[pii.Type]string{
+		pii.TypeAddress:    "г. Москва, Ленинградский проспект, д. 10, кв. 15",
+		pii.TypeCardNumber: "5555 5555 5555 4444",
+	}
+	for typ, value := range want {
+		matched := false
+		for _, fragment := range got {
+			if fragment.Type == typ && text[fragment.Start:fragment.End] == value {
+				matched = true
+			}
+		}
+		if !matched {
+			t.Fatalf("missing %s=%q in %+v (%q)", typ, value, got, fragmentsText(text, got))
+		}
+	}
+}

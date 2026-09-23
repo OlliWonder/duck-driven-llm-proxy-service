@@ -43,11 +43,26 @@ func findLabel(lowerText string, from int, labels []string) int {
 }
 
 func hasLabelBoundaries(text string, pos int, label string) bool {
-	if isWordByte(label[0]) && pos > 0 && isWordByte(text[pos-1]) {
-		return false
+	first, _ := utf8.DecodeRuneInString(label)
+	if isWordRune(first) && pos > 0 {
+		prev, _ := utf8.DecodeLastRuneInString(text[:pos])
+		if isWordRune(prev) {
+			return false
+		}
 	}
 	end := pos + len(label)
-	return !isWordByte(label[len(label)-1]) || end == len(text) || !isWordByte(text[end])
+	last, _ := utf8.DecodeLastRuneInString(label)
+	if !isWordRune(last) || end == len(text) {
+		return true
+	}
+	next, _ := utf8.DecodeRuneInString(text[end:])
+	return !isWordRune(next)
+}
+
+func isWordRune(r rune) bool {
+	// UTF-8 punctuation such as «» and emoji is not a word boundary merely
+	// because its encoded bytes have the high bit set.
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 // skipSeparators пропускает разделители (двоеточие, дефис, пробелы, запятые)
@@ -56,11 +71,13 @@ func skipSeparators(text string, from int) int {
 	i := from
 	for i < len(text) {
 		c := text[i]
-		if c == ':' || c == '-' || c == '=' || c == ' ' || c == '\t' || c == ',' || c == ';' {
+		if c == ':' || c == '-' || c == '=' || c == ' ' || c == '\t' || c == ',' || c == ';' || c == '"' || c == '\'' {
 			i++
 			continue
 		}
-		if strings.HasPrefix(text[i:], "—") || strings.HasPrefix(text[i:], "–") || strings.HasPrefix(text[i:], "№") {
+		if strings.HasPrefix(text[i:], "—") || strings.HasPrefix(text[i:], "–") || strings.HasPrefix(text[i:], "№") ||
+			strings.HasPrefix(text[i:], "«") || strings.HasPrefix(text[i:], "»") ||
+			strings.HasPrefix(text[i:], "“") || strings.HasPrefix(text[i:], "”") || strings.HasPrefix(text[i:], "„") {
 			_, size := utf8.DecodeRuneInString(text[i:])
 			i += size
 			continue
@@ -186,6 +203,9 @@ func scanAddressValue(text string, start int) (int, bool) {
 	i := start
 	for i < len(text) {
 		c := text[i]
+		if c == ' ' && startsFollowingPIIField(text[i:]) {
+			break
+		}
 		if c == '\n' || c == '\r' || c == ';' {
 			break
 		}
@@ -204,6 +224,19 @@ func scanAddressValue(text string, start int) (int, bool) {
 		return 0, false
 	}
 	return i, true
+}
+
+func startsFollowingPIIField(text string) bool {
+	lower := strings.ToLower(text)
+	for _, prefix := range []string{
+		" и номер карты", " и банковская карта", " и карта", " и телефон", " и номер телефона",
+		" и email", " и e-mail", " и электронная почта", " и инн", " и cvv", " и cvc", " и pin", " и пин",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 var addressAbbreviations = map[string]bool{

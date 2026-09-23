@@ -36,7 +36,8 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 		valStart := fullNameValueStart(text, labelEnd)
 		// A role or card owner between the generic "имя" label and the
 		// delimiter belongs to another entity/type, not to the client name.
-		if hasNonPersonalNameFieldOwner(lowerText[labelEnd:valStart]) {
+		if hasNonPersonalNameFieldOwner(lowerText[labelEnd:valStart]) ||
+			strings.HasPrefix(lowerText[valStart:], "держател") || strings.HasPrefix(lowerText[valStart:], "владельца карты") {
 			from = labelEnd + 1
 			continue
 		}

@@ -17,6 +17,8 @@ package ner
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/duck-driven-llm-proxy-service/internal/detection"
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
@@ -43,11 +45,46 @@ func NewValidator() *Validator { return &Validator{} }
 func (v *Validator) Validate(text string, cands []Candidate) []detection.Fragment {
 	frags := make([]detection.Fragment, 0, len(cands))
 	for _, c := range cands {
+		c = trimCandidateRolePrefix(text, c)
 		if t, ok := v.decide(text, c); ok {
 			frags = append(frags, detection.Fragment{Type: t, Start: c.Start, End: c.End})
 		}
 	}
 	return frags
+}
+
+func trimCandidateRolePrefix(text string, candidate Candidate) Candidate {
+	if candidate.Label != LabelPER || candidate.Start < 0 || candidate.End > len(text) {
+		return candidate
+	}
+	value := text[candidate.Start:candidate.End]
+	lower := strings.ToLower(value)
+	for _, role := range []string{"клиент", "заявитель", "заёмщик", "заемщик", "гражданин", "гражданка"} {
+		if !strings.HasPrefix(lower, role) {
+			continue
+		}
+		end := len(role)
+		if end >= len(lower) {
+			continue
+		}
+		next, _ := utf8.DecodeRuneInString(lower[end:])
+		if !unicode.IsSpace(next) && next != ':' && next != '—' && next != '-' {
+			continue
+		}
+		for end < len(value) {
+			r, size := utf8.DecodeRuneInString(value[end:])
+			if !unicode.IsSpace(r) && r != ':' && r != '—' && r != '-' {
+				break
+			}
+			end += size
+		}
+		if end < len(value) {
+			candidate.Start += end
+			candidate.Text = text[candidate.Start:candidate.End]
+		}
+		return candidate
+	}
+	return candidate
 }
 
 // decide возвращает тип ПДН для кандидата или false, если кандидат не является
@@ -227,14 +264,21 @@ func lastSignatureIndex(text, signature string) int {
 }
 
 func signatureBoundaries(text string, start int, signature string) bool {
-	isWord := func(b byte) bool {
-		return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 0x80
-	}
-	if start > 0 && isWord(signature[0]) && isWord(text[start-1]) {
-		return false
+	isWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
+	first, _ := utf8.DecodeRuneInString(signature)
+	if start > 0 && isWord(first) {
+		previous, _ := utf8.DecodeLastRuneInString(text[:start])
+		if isWord(previous) {
+			return false
+		}
 	}
 	end := start + len(signature)
-	return !isWord(signature[len(signature)-1]) || end == len(text) || !isWord(text[end])
+	last, _ := utf8.DecodeLastRuneInString(signature)
+	if !isWord(last) || end == len(text) {
+		return true
+	}
+	next, _ := utf8.DecodeRuneInString(text[end:])
+	return !isWord(next)
 }
 
 func containsPublicRole(clause string) bool {
@@ -286,6 +330,9 @@ var perSignatures = []signature{
 	{text: "физлицо", typ: pii.TypeFullName},
 	{text: "гражданин", typ: pii.TypeFullName},
 	{text: "гражданка", typ: pii.TypeFullName},
+	{text: "гражданина", typ: pii.TypeFullName},
+	{text: "заёмщика", typ: pii.TypeFullName},
+	{text: "заемщика", typ: pii.TypeFullName},
 	// Отрицательные → не ПДН.
 	{text: "поэт"},
 	{text: "писатель"},

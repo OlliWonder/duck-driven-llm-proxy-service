@@ -342,3 +342,26 @@ func fragmentsEqual(a, b []detection.Fragment) bool {
 	}
 	return true
 }
+
+func TestValidateRunnerNameContexts(t *testing.T) {
+	v := NewValidator()
+	tests := []struct {
+		text      string
+		candidate string
+		want      string
+	}{
+		{text: "Клиент Пётр Николаевич Орлов родился в г. Самара.", candidate: "Клиент Пётр Николаевич Орлов", want: "Пётр Николаевич Орлов"},
+		{text: "Данные заёмщика: Пётр Николаевич Орлов.", candidate: "Пётр Николаевич Орлов", want: "Пётр Николаевич Орлов"},
+		{text: "По заявлению гражданина Пётр Николаевич Орлов начата проверка.", candidate: "Пётр Николаевич Орлов", want: "Пётр Николаевич Орлов"},
+	}
+	for _, tt := range tests {
+		start := strings.Index(tt.text, tt.candidate)
+		candidate := Candidate{Label: LabelPER, Start: start, End: start + len(tt.candidate), Text: tt.candidate}
+		got := v.Validate(tt.text, []Candidate{candidate})
+		wantStart := strings.Index(tt.text, tt.want)
+		want := []detection.Fragment{{Type: pii.TypeFullName, Start: wantStart, End: wantStart + len(tt.want)}}
+		if !fragmentsEqual(got, want) {
+			t.Fatalf("%q: got %+v, want %+v", tt.text, got, want)
+		}
+	}
+}
