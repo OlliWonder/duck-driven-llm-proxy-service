@@ -12,10 +12,13 @@ package detection
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 )
+
+var ErrOverloaded = errors.New("detection overloaded")
 
 // Fragment — обнаруженный участок персональных данных в исходном тексте.
 type Fragment struct {

@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -28,6 +29,7 @@ type Config struct {
 	MaxRPS int `json:"max_rps"`
 	// NEREndpoint — адрес локального NER sidecar.
 	NEREndpoint string `json:"ner_endpoint"`
+	NERWorkers  int    `json:"ner_workers"`
 	// Allowlist — набор потребителей, которым разрешено обращаться к модулю.
 	Allowlist []string `json:"allowlist"`
 	// Consumers сопоставляет идентификатор потребителя с его политикой.
@@ -70,6 +72,7 @@ func Default() Config {
 		StoreMaxSize: 1_000_000,
 		MaxRPS:       0,
 		NEREndpoint:  "http://127.0.0.1:8090",
+		NERWorkers:   1,
 		Allowlist:    nil,
 		Consumers:    map[string]ConsumerConfig{},
 	}
@@ -117,6 +120,16 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("PII_NER_ENDPOINT"); v != "" {
 		cfg.NEREndpoint = v
+	}
+	if v := os.Getenv("PII_NER_WORKERS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.NERWorkers = n
+	}
+	if cfg.NERWorkers < 1 || cfg.NERWorkers > 32 {
+		return cfg, fmt.Errorf("config: ner_workers must be between 1 and 32")
 	}
 	return cfg, nil
 }

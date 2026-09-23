@@ -4,6 +4,7 @@
   "store_ttl": "24h",
   "store_max_size": 1000000,
   "max_rps": 0,
+  "ner_workers": 1,
   "allowlist": ["default", "crm", "mobile"],
   "consumers": {
     "default": {

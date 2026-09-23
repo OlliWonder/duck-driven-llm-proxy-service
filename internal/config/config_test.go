@@ -74,12 +74,16 @@ func TestNEREndpointDefaultAndEnvironmentOverride(t *testing.T) {
 		t.Fatalf("default NER endpoint: %q", got)
 	}
 	t.Setenv("PII_NER_ENDPOINT", "http://ner-sidecar:8090")
+	t.Setenv("PII_NER_WORKERS", "7")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if cfg.NEREndpoint != "http://ner-sidecar:8090" {
 		t.Fatalf("environment NER endpoint: %q", cfg.NEREndpoint)
+	}
+	if cfg.NERWorkers != 7 {
+		t.Fatalf("environment NER workers: %d", cfg.NERWorkers)
 	}
 }
 

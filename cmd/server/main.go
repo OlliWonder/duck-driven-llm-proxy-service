@@ -56,7 +56,7 @@ func main() {
 
 	m := metrics.New()
 
-	nerClient := ner.NewClient(cfg.NEREndpoint)
+	nerClient := ner.NewClientWithWorkers(cfg.NEREndpoint, cfg.NERWorkers)
 	defer nerClient.Close()
 
 	var det detection.Detector = ner.NewProductionDetector(nerClient)
@@ -68,7 +68,7 @@ func main() {
 	mux.Handle("/process", handler)
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte(m.Prometheus()))
+		_, _ = w.Write([]byte(m.Prometheus() + nerClient.Prometheus()))
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

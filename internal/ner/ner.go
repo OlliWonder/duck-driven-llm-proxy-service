@@ -33,6 +33,8 @@ const (
 	DefaultMaxBatch  = 16
 	DefaultMaxWait   = 8 * time.Millisecond
 	DefaultQueueSize = 256
+	DefaultWorkers   = 1
+	MaxWorkers       = 32
 	maxStatsSamples  = 10_000
 )
 
@@ -64,6 +66,7 @@ type Options struct {
 	MaxBatch  int
 	MaxWait   time.Duration
 	QueueSize int
+	Workers   int
 }
 
 // batchItem — один запрос в очереди microbatcher.
@@ -89,6 +92,8 @@ type Client struct {
 	maxBatch int
 	maxWait  time.Duration
 	queue    chan *batchItem
+	batches  chan []*batchItem
+	workers  int
 	done     chan struct{}
 
 	wg        sync.WaitGroup
@@ -105,7 +110,11 @@ type Client struct {
 	// conns — число новых TCP-соединений, открытых к sidecar. Считается в
 	// DialContext. Если keep-alive работает, conns должно быть малым по
 	// сравнению с числом batch-запросов.
-	conns atomic.Int64
+	conns        atomic.Int64
+	batchesTotal atomic.Int64
+	textsTotal   atomic.Int64
+	batchErrors  atomic.Int64
+	maxQueueLen  atomic.Int64
 }
 
 // BatchTiming — разбивка времени обработки одного batch.
@@ -130,7 +139,14 @@ type Stats struct {
 	// SidecarMap — время Slovnet map на batch (из служебных данных sidecar).
 	SidecarMap []time.Duration
 	// SidecarTotal — общее время обработки batch внутри Python.
-	SidecarTotal []time.Duration
+	SidecarTotal  []time.Duration
+	BatchesTotal  int64
+	TextsTotal    int64
+	BatchErrors   int64
+	QueueDepth    int
+	MaxQueueDepth int64
+	QueueCapacity int
+	Connections   int64
 }
 
 // Stats возвращает копию собранной статистики.
@@ -143,6 +159,9 @@ func (c *Client) Stats() Stats {
 		HTTPRTTs:     append([]time.Duration(nil), c.httpRTTs...),
 		SidecarMap:   append([]time.Duration(nil), c.sidecarMap...),
 		SidecarTotal: append([]time.Duration(nil), c.sidecarTot...),
+		BatchesTotal: c.batchesTotal.Load(), TextsTotal: c.textsTotal.Load(),
+		BatchErrors: c.batchErrors.Load(), QueueDepth: len(c.queue),
+		MaxQueueDepth: c.maxQueueLen.Load(), QueueCapacity: cap(c.queue), Connections: c.conns.Load(),
 	}
 }
 
@@ -156,12 +175,28 @@ func (c *Client) ResetStats() {
 	c.httpRTTs = c.httpRTTs[:0]
 	c.sidecarMap = c.sidecarMap[:0]
 	c.sidecarTot = c.sidecarTot[:0]
+	c.batchesTotal.Store(0)
+	c.textsTotal.Store(0)
+	c.batchErrors.Store(0)
+	c.maxQueueLen.Store(int64(len(c.queue)))
 }
 
 func (c *Client) recordBatch(size int) {
+	c.batchesTotal.Add(1)
+	c.textsTotal.Add(int64(size))
 	c.statsMu.Lock()
 	c.batchSizes = appendStat(c.batchSizes, size)
 	c.statsMu.Unlock()
+}
+
+func (c *Client) recordQueueDepth(depth int) {
+	current := int64(depth)
+	for {
+		maximum := c.maxQueueLen.Load()
+		if current <= maximum || c.maxQueueLen.CompareAndSwap(maximum, current) {
+			return
+		}
+	}
 }
 
 func (c *Client) recordQueueWait(d time.Duration) {
@@ -199,7 +234,12 @@ func NewClient(baseURL string) *Client {
 		MaxBatch:  DefaultMaxBatch,
 		MaxWait:   DefaultMaxWait,
 		QueueSize: DefaultQueueSize,
+		Workers:   DefaultWorkers,
 	})
+}
+
+func NewClientWithWorkers(baseURL string, workers int) *Client {
+	return NewClientWithOptions(baseURL, Options{MaxBatch: DefaultMaxBatch, MaxWait: DefaultMaxWait, QueueSize: DefaultQueueSize, Workers: workers})
 }
 
 // NewClientWithOptions создаёт клиент с заданными параметрами microbatcher.
@@ -215,11 +255,18 @@ func NewClientWithOptions(baseURL string, opts Options) *Client {
 	if opts.QueueSize <= 0 {
 		opts.QueueSize = DefaultQueueSize
 	}
+	if opts.Workers <= 0 {
+		opts.Workers = DefaultWorkers
+	} else if opts.Workers > MaxWorkers {
+		opts.Workers = MaxWorkers
+	}
 	c := &Client{
 		baseURL:  strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		maxBatch: opts.MaxBatch,
 		maxWait:  opts.MaxWait,
 		queue:    make(chan *batchItem, opts.QueueSize),
+		batches:  make(chan []*batchItem, opts.Workers),
+		workers:  opts.Workers,
 		done:     make(chan struct{}),
 	}
 	// Явный Transport с keep-alive (DisableKeepAlives=false) и подсчётом новых
@@ -237,8 +284,11 @@ func NewClientWithOptions(baseURL string, opts Options) *Client {
 	}
 	c.http = &http.Client{Transport: tr, Timeout: 30 * time.Second}
 	c.transport = tr
-	c.wg.Add(1)
-	go c.worker()
+	c.wg.Add(1 + c.workers)
+	go c.batchLoop()
+	for range c.workers {
+		go c.worker()
+	}
 	return c
 }
 
@@ -280,6 +330,7 @@ func (c *Client) Detect(ctx context.Context, text string) ([]Candidate, error) {
 	item := &batchItem{text: text, ctx: ctx, ch: make(chan batchResult, 1), enqueuedAt: time.Now()}
 	select {
 	case c.queue <- item:
+		c.recordQueueDepth(len(c.queue))
 	case <-c.done:
 		return nil, ErrClientClosed
 	case <-ctx.Done():
@@ -295,14 +346,25 @@ func (c *Client) Detect(ctx context.Context, text string) ([]Candidate, error) {
 	}
 }
 
-// worker накапливает запросы в batch и отправляет их в sidecar.
-func (c *Client) worker() {
+func (c *Client) batchLoop() {
 	defer c.wg.Done()
+	defer close(c.batches)
 	for {
 		items := c.collectBatch()
 		if len(items) == 0 {
 			return
 		}
+		select {
+		case c.batches <- items:
+		case <-c.done:
+			return
+		}
+	}
+}
+
+func (c *Client) worker() {
+	defer c.wg.Done()
+	for items := range c.batches {
 		c.processBatch(items)
 	}
 }
@@ -361,6 +423,9 @@ func (c *Client) processBatch(items []*batchItem) {
 	start := time.Now()
 	results, timing, err := c.sendBatch(texts)
 	c.recordHTTPRTT(time.Since(start))
+	if err != nil {
+		c.batchErrors.Add(1)
+	}
 	if timing != nil {
 		c.recordSidecarTiming(timing.mapMs, timing.totalMs)
 	}

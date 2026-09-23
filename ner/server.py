@@ -14,8 +14,8 @@ end исключительно), чтобы text[start:end] в Go возвращ
 
 import json
 import os
+import queue
 import sys
-import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -30,24 +30,37 @@ NER_PATH = os.path.join(BASE_DIR, "models", "slovnet_ner_news_v1.tar")
 # Глобальные объекты модели — загружаются один раз при старте.
 _navec = None
 _ner = None
-_ner_lock = threading.Lock()
+_ner_pool = None
 
 MAX_BATCH = 16
 MAX_TEXT_BYTES = 16 * 1024
 MAX_BODY_BYTES = 2 * 1024 * 1024
+NER_WORKERS = min(32, max(1, int(os.environ.get("NER_WORKERS", "1"))))
+SLOVNET_BATCH_SIZE = MAX_BATCH
+LOG_BATCH_TIMINGS = os.environ.get("NER_LOG_BATCHES", "0") == "1"
 
 
 def load_models():
-    global _navec, _ner
+    global _navec, _ner, _ner_pool
     _navec = Navec.load(NAVEC_PATH)
-    _ner = NER.load(NER_PATH)
-    _ner.navec(_navec)
+    models = []
+    for _ in range(NER_WORKERS):
+        model = NER.load(NER_PATH, batch_size=SLOVNET_BATCH_SIZE)
+        model.navec(_navec)
+        models.append(model)
+    _ner = models[0]
+    _ner_pool = queue.LifoQueue(maxsize=NER_WORKERS)
+    for model in models:
+        _ner_pool.put(model)
 
 
 def ner_spans(text):
     """Возвращает список сущностей с байтовыми позициями."""
-    with _ner_lock:
-        markup = _ner(text)
+    model = _ner_pool.get()
+    try:
+        markup = model(text)
+    finally:
+        _ner_pool.put(model)
     spans = []
     for span in markup.spans:
         if span.type not in ("PER", "LOC", "ORG"):
@@ -70,8 +83,11 @@ def ner_batch(texts):
     Порядок результатов совпадает с порядком входов.
     """
     t0 = time.perf_counter()
-    with _ner_lock:
-        markups = list(_ner.map(texts))
+    model = _ner_pool.get()
+    try:
+        markups = list(model.map(texts))
+    finally:
+        _ner_pool.put(model)
     map_ms = (time.perf_counter() - t0) * 1000
     results = []
     for text, markup in zip(texts, markups):
@@ -169,11 +185,9 @@ class Handler(BaseHTTPRequestHandler):
             },
         }
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        sys.stderr.write(
-            "BATCH n=%d map=%.2fms ser=%.2fms total=%.2fms\n"
-            % (len(texts), map_ms, ser_ms, total_ms)
-        )
-        sys.stderr.flush()
+        if LOG_BATCH_TIMINGS:
+            sys.stderr.write("BATCH n=%d map=%.2fms ser=%.2fms total=%.2fms\n" % (len(texts), map_ms, ser_ms, total_ms))
+            sys.stderr.flush()
         self._json_bytes(200, data)
 
     def do_GET(self):
@@ -195,7 +209,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def log_message(self, fmt, *args):  # noqa: A003
-        sys.stderr.write("%s\n" % (fmt % args))
+        try:
+            status = int(args[1])
+        except (IndexError, TypeError, ValueError):
+            status = 500
+        if status >= 400:
+            sys.stderr.write("%s\n" % (fmt % args))
+            sys.stderr.flush()
 
 
 def main():
@@ -203,7 +223,7 @@ def main():
     port = int(os.environ.get("NER_PORT", "8090"))
     load_models()
     server = ThreadingHTTPServer((host, port), Handler)
-    sys.stderr.write("NER sidecar listening on %s:%d\n" % (host, port))
+    sys.stderr.write("NER sidecar listening on %s:%d workers=%d batch=%d\n" % (host, port, NER_WORKERS, SLOVNET_BATCH_SIZE))
     sys.stderr.flush()
     server.serve_forever()
 

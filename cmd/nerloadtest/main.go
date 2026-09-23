@@ -30,9 +30,10 @@ func main() {
 	concFlag := flag.String("concurrency", "16,32,64,128", "список concurrency")
 	mode := flag.String("mode", "unique", "режим текстов: unique | repeat")
 	poolSize := flag.Int("pool", 100, "размер пула текстов для режима repeat")
+	workers := flag.Int("workers", 7, "число параллельных NER batch workers")
 	flag.Parse()
 
-	client := ner.NewClient(baseURL)
+	client := ner.NewClientWithWorkers(baseURL, *workers)
 	defer client.Close()
 	det := ner.NewDetector(client)
 
@@ -41,7 +42,7 @@ func main() {
 	_, _ = det.Detect(ctx, "клиент Иван Петров прогрев")
 
 	fmt.Println("=== NER microbatcher load test (duration-based) ===")
-	fmt.Printf("duration=%s mode=%s pool=%d\n", duration, *mode, *poolSize)
+	fmt.Printf("duration=%s mode=%s pool=%d workers=%d\n", *duration, *mode, *poolSize, *workers)
 	fmt.Println()
 
 	for _, conc := range parseConcurrency(*concFlag) {

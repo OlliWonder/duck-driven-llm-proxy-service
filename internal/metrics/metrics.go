@@ -1,120 +1,142 @@
-// Пакет metrics собирает эксплуатационные метрики: задержку, скорость
-// запросов (RPS) и пропускную способность токенов (TPS). Он предоставляет
-// текстовый эндпоинт в стиле Prometheus и внутрипроцессные счётчики.
 package metrics
 
 import (
+	"runtime"
 	"strconv"
-	"sync"
+	"strings"
 	"sync/atomic"
 	"time"
 )
 
-// Metrics агрегирует счётчики и датчики для сервиса.
+var requestDurationBounds = [...]time.Duration{5 * time.Millisecond, 10 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond, time.Second, 2500 * time.Millisecond, 5 * time.Second, 10 * time.Second, 30 * time.Second}
+
 type Metrics struct {
-	mu sync.Mutex
-
-	requestsTotal   atomic.Int64
-	errorsTotal     atomic.Int64
-	rateLimited     atomic.Int64
-	tokensProcessed atomic.Int64
-
-	// окно задержки
-	latencySum   atomic.Int64 // наносекунды
-	latencyCount atomic.Int64
-
-	start time.Time
+	requestsTotal, errorsTotal, rateLimited, overloaded, tokensProcessed atomic.Int64
+	inFlight, maxInFlight                                                atomic.Int64
+	responses                                                            [6]atomic.Int64
+	latencySum, latencyCount                                             atomic.Int64
+	latencyBuckets                                                       [len(requestDurationBounds) + 1]atomic.Int64
+	start                                                                time.Time
 }
 
-// New возвращает коллектор метрик.
-func New() *Metrics {
-	return &Metrics{start: time.Now()}
+func New() *Metrics { return &Metrics{start: time.Now()} }
+func (m *Metrics) RequestStarted() {
+	m.requestsTotal.Add(1)
+	current := m.inFlight.Add(1)
+	for {
+		maximum := m.maxInFlight.Load()
+		if current <= maximum || m.maxInFlight.CompareAndSwap(maximum, current) {
+			return
+		}
+	}
 }
-
-// IncRequests увеличивает общий счётчик запросов.
-func (m *Metrics) IncRequests() { m.requestsTotal.Add(1) }
-
-// IncErrors увеличивает счётчик ошибок.
-func (m *Metrics) IncErrors() { m.errorsTotal.Add(1) }
-
-// IncRateLimited увеличивает счётчик ответов 429.
-func (m *Metrics) IncRateLimited() { m.rateLimited.Add(1) }
-
-// AddTokens добавляет n обработанных токенов.
+func (m *Metrics) RequestFinished(status int, elapsed time.Duration) {
+	m.inFlight.Add(-1)
+	class := status / 100
+	if class >= 1 && class <= 5 {
+		m.responses[class].Add(1)
+	}
+	m.ObserveLatency(elapsed.Nanoseconds())
+}
+func (m *Metrics) IncErrors()        { m.errorsTotal.Add(1) }
+func (m *Metrics) IncRateLimited()   { m.rateLimited.Add(1) }
+func (m *Metrics) IncOverloaded()    { m.overloaded.Add(1) }
 func (m *Metrics) AddTokens(n int64) { m.tokensProcessed.Add(n) }
-
-// ObserveLatency фиксирует задержку запроса в наносекундах.
 func (m *Metrics) ObserveLatency(ns int64) {
+	if ns < 0 {
+		ns = 0
+	}
 	m.latencySum.Add(ns)
 	m.latencyCount.Add(1)
+	bucket := len(requestDurationBounds)
+	for i, upper := range requestDurationBounds {
+		if time.Duration(ns) <= upper {
+			bucket = i
+			break
+		}
+	}
+	m.latencyBuckets[bucket].Add(1)
 }
 
-// Snapshot возвращает мгновенный срез счётчиков.
+type Snapshot struct {
+	UptimeSeconds                                            float64
+	RequestsTotal, ErrorsTotal, RateLimited, TokensProcessed int64
+	RPS, LatencyAvgMs                                        float64
+	LatencyCount, InFlight, MaxInFlight                      int64
+}
+
 func (m *Metrics) Snapshot() Snapshot {
 	up := time.Since(m.start).Seconds()
 	req := m.requestsTotal.Load()
-	return Snapshot{
-		UptimeSeconds:   up,
-		RequestsTotal:   req,
-		ErrorsTotal:     m.errorsTotal.Load(),
-		RateLimited:     m.rateLimited.Load(),
-		TokensProcessed: m.tokensProcessed.Load(),
-		RPS:             float64(req) / up,
-		LatencyAvgMs:    avgMs(m.latencySum.Load(), m.latencyCount.Load()),
-		LatencyCount:    m.latencyCount.Load(),
-	}
+	return Snapshot{up, req, m.errorsTotal.Load(), m.rateLimited.Load(), m.tokensProcessed.Load(), float64(req) / up, avgMs(m.latencySum.Load(), m.latencyCount.Load()), m.latencyCount.Load(), m.inFlight.Load(), m.maxInFlight.Load()}
 }
-
-// Snapshot — мгновенный срез метрик.
-type Snapshot struct {
-	UptimeSeconds   float64
-	RequestsTotal   int64
-	ErrorsTotal     int64
-	RateLimited     int64
-	TokensProcessed int64
-	RPS             float64
-	LatencyAvgMs    float64
-	LatencyCount    int64
-}
-
-func avgMs(sumNs, count int64) float64 {
+func avgMs(sum, count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	return float64(sumNs) / float64(count) / 1e6
+	return float64(sum) / float64(count) / 1e6
 }
 
-// Prometheus отображает метрики в текстовом формате Prometheus.
 func (m *Metrics) Prometheus() string {
 	s := m.Snapshot()
-	return "pii_requests_total " + itoa(s.RequestsTotal) + "\n" +
-		"pii_errors_total " + itoa(s.ErrorsTotal) + "\n" +
-		"pii_rate_limited_total " + itoa(s.RateLimited) + "\n" +
-		"pii_tokens_processed_total " + itoa(s.TokensProcessed) + "\n" +
-		"pii_rps " + ftoa(s.RPS) + "\n" +
-		"pii_latency_avg_ms " + ftoa(s.LatencyAvgMs) + "\n" +
-		"pii_uptime_seconds " + ftoa(s.UptimeSeconds) + "\n"
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	var b strings.Builder
+	wi(&b, "pii_requests_total", s.RequestsTotal)
+	wi(&b, "pii_errors_total", s.ErrorsTotal)
+	wi(&b, "pii_rate_limited_total", s.RateLimited)
+	wi(&b, "pii_overloaded_total", m.overloaded.Load())
+	wi(&b, "pii_tokens_processed_total", s.TokensProcessed)
+	wi(&b, "pii_output_bytes_total", s.TokensProcessed)
+	wf(&b, "pii_rps", s.RPS)
+	wf(&b, "pii_latency_avg_ms", s.LatencyAvgMs)
+	wf(&b, "pii_uptime_seconds", s.UptimeSeconds)
+	wi(&b, "pii_in_flight_requests", s.InFlight)
+	wi(&b, "pii_in_flight_requests_max", s.MaxInFlight)
+	for class := 1; class <= 5; class++ {
+		b.WriteString("pii_responses_total{class=\"")
+		b.WriteString(strconv.Itoa(class))
+		b.WriteString("xx\"} ")
+		b.WriteString(strconv.FormatInt(m.responses[class].Load(), 10))
+		b.WriteByte('\n')
+	}
+	cumulative := int64(0)
+	for i, upper := range requestDurationBounds {
+		cumulative += m.latencyBuckets[i].Load()
+		b.WriteString("pii_request_duration_seconds_bucket{le=\"")
+		b.WriteString(strconv.FormatFloat(upper.Seconds(), 'f', 3, 64))
+		b.WriteString("\"} ")
+		b.WriteString(strconv.FormatInt(cumulative, 10))
+		b.WriteByte('\n')
+	}
+	cumulative += m.latencyBuckets[len(requestDurationBounds)].Load()
+	b.WriteString("pii_request_duration_seconds_bucket{le=\"+Inf\"} ")
+	b.WriteString(strconv.FormatInt(cumulative, 10))
+	b.WriteByte('\n')
+	wf(&b, "pii_request_duration_seconds_sum", float64(m.latencySum.Load())/float64(time.Second))
+	wi(&b, "pii_request_duration_seconds_count", m.latencyCount.Load())
+	wi(&b, "pii_runtime_goroutines", int64(runtime.NumGoroutine()))
+	wu(&b, "pii_runtime_heap_alloc_bytes", mem.HeapAlloc)
+	wu(&b, "pii_runtime_heap_inuse_bytes", mem.HeapInuse)
+	wu(&b, "pii_runtime_sys_bytes", mem.Sys)
+	wu(&b, "pii_runtime_gc_cycles_total", uint64(mem.NumGC))
+	return b.String()
 }
-
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	if neg {
-		b = append([]byte{'-'}, b...)
-	}
-	return string(b)
+func wi(b *strings.Builder, n string, v int64) {
+	b.WriteString(n)
+	b.WriteByte(' ')
+	b.WriteString(strconv.FormatInt(v, 10))
+	b.WriteByte('\n')
 }
-
-func ftoa(f float64) string {
-	return strconv.FormatFloat(f, 'f', 3, 64)
+func wu(b *strings.Builder, n string, v uint64) {
+	b.WriteString(n)
+	b.WriteByte(' ')
+	b.WriteString(strconv.FormatUint(v, 10))
+	b.WriteByte('\n')
+}
+func wf(b *strings.Builder, n string, v float64) {
+	b.WriteString(n)
+	b.WriteByte(' ')
+	b.WriteString(strconv.FormatFloat(v, 'f', 6, 64))
+	b.WriteByte('\n')
 }

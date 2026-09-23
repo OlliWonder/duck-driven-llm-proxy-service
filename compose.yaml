@@ -1,5 +1,11 @@
 name: alfagen
 
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   ner:
     build:
@@ -8,8 +14,14 @@ services:
     environment:
       NER_HOST: 0.0.0.0
       NER_PORT: "8090"
+      NER_WORKERS: "${NER_WORKERS:-7}"
+      NER_LOG_BATCHES: "${NER_LOG_BATCHES:-0}"
     expose:
       - "8090"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     healthcheck:
       test:
         - CMD
@@ -21,6 +33,7 @@ services:
       start_period: 30s
       retries: 12
     restart: unless-stopped
+    logging: *bounded-logging
 
   api:
     build:
@@ -31,14 +44,26 @@ services:
         condition: service_healthy
     environment:
       PII_LISTEN_ADDR: ":8080"
-      PII_NER_ENDPOINT: http://ner:8090
-      PII_AES_KEY: ${PII_AES_KEY:-}
+      PII_NER_ENDPOINT: "http://ner:8090"
+      PII_NER_WORKERS: "${NER_WORKERS:-7}"
+      PII_AES_KEY: "${PII_AES_KEY:-}"
     ports:
       - "8080:8080"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - "http://127.0.0.1:8080/healthz"
       interval: 5s
       timeout: 3s
       start_period: 5s
       retries: 12
     restart: unless-stopped
+    logging: *bounded-logging

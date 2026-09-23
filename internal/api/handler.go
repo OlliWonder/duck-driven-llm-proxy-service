@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/duck-driven-llm-proxy-service/internal/detection"
 	"github.com/duck-driven-llm-proxy-service/internal/metrics"
 )
 
@@ -48,14 +49,18 @@ func NewHandler(svc *Service, m *metrics.Metrics, log *slog.Logger, rateLimiter 
 
 // ServeHTTP реализует http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	status := http.StatusOK
+	h.metrics.RequestStarted()
+	defer func() { h.metrics.RequestFinished(status, time.Since(start)) }()
 	if r.Method != http.MethodPost {
+		status = http.StatusMethodNotAllowed
 		writeError(w, http.StatusMethodNotAllowed, "метод не поддерживается")
 		return
 	}
-	start := time.Now()
-	h.metrics.IncRequests()
 
 	if h.rateLimiter != nil && !h.rateLimiter() {
+		status = http.StatusTooManyRequests
 		h.metrics.IncRateLimited()
 		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusTooManyRequests, "слишком много запросов")
@@ -69,9 +74,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.metrics.IncErrors()
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
+			status = http.StatusRequestEntityTooLarge
 			writeError(w, http.StatusRequestEntityTooLarge, "слишком большой запрос")
 			return
 		}
+		status = http.StatusBadRequest
 		writeError(w, http.StatusBadRequest, "некорректный json")
 		return
 	}
@@ -79,9 +86,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.metrics.IncErrors()
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
+			status = http.StatusRequestEntityTooLarge
 			writeError(w, http.StatusRequestEntityTooLarge, "слишком большой запрос")
 			return
 		}
+		status = http.StatusBadRequest
 		writeError(w, http.StatusBadRequest, "некорректный json")
 		return
 	}
@@ -96,17 +105,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.metrics.IncErrors()
 		switch {
 		case errors.Is(err, ErrInvalid):
+			status = http.StatusBadRequest
 			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrForbidden):
+			status = http.StatusForbidden
 			writeError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, detection.ErrOverloaded):
+			status = http.StatusServiceUnavailable
+			h.metrics.IncOverloaded()
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusServiceUnavailable, "сервис перегружен, повторите запрос")
 		default:
+			status = http.StatusInternalServerError
 			h.log.Error("process failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "внутренняя ошибка")
 		}
 		return
 	}
 
-	h.metrics.ObserveLatency(time.Since(start).Nanoseconds())
 	h.metrics.AddTokens(int64(len(result)))
 	writeJSON(w, http.StatusOK, ProcessResponse{Result: result})
 }

@@ -144,7 +144,7 @@ func (c *Cache) Get(ctx context.Context, text string, fn func() ([]detection.Fra
 	}
 	if len(c.inflight) >= c.maxInflight {
 		c.mu.Unlock()
-		return nil, ErrTooManyInflight
+		return nil, fmt.Errorf("%w: %w", detection.ErrOverloaded, ErrTooManyInflight)
 	}
 	// Создаём inflight и выполняем fn вне блокировки.
 	fl := &inflight{done: make(chan struct{})}
