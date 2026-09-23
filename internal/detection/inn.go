@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"strings"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 )
@@ -32,13 +33,23 @@ func (d *INNDetector) Detect(_ context.Context, text string) ([]Fragment, error)
 		n := j - i
 		if (n == 10 || n == 12) && validINN(text[i:j]) {
 			// Границы слова.
-			if (i == 0 || !isWordByte(text[i-1])) && (j == len(text) || !isWordByte(text[j])) {
+			if (i == 0 || !isWordByte(text[i-1])) && (j == len(text) || !isWordByte(text[j])) && !isOrganizationINNContext(text, i) {
 				frags = append(frags, Fragment{Type: pii.TypeINN, Start: i, End: j})
 			}
 		}
 		i = j
 	}
 	return frags, nil
+}
+
+func isOrganizationINNContext(text string, start int) bool {
+	before := strings.ToLower(windowBefore(text, start, 192))
+	for _, marker := range []string{"инн организации", "инн компании", "инн музея", "инн банка", "инн учреждения", "инн юрлица", "открытом реестре", "публичном реестре"} {
+		if strings.Contains(before, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // validINN проверяет контрольную сумму ИНН (10 или 12 цифр).

@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
@@ -26,7 +27,8 @@ func (d *BirthPlaceDetector) Detect(_ context.Context, text string) ([]Fragment,
 		if labelEnd < 0 {
 			break
 		}
-		if hasPublicRoleBefore(lowerText, labelEnd) || hasNonPersonalBirthPlaceValue(lowerText, labelEnd) {
+		if hasPublicRoleBefore(lowerText, labelEnd) || hasHistoricalBioContext(lowerText, labelEnd) ||
+			hasPublicBioLinkedToClient(lowerText, labelEnd) || hasNonPersonalBirthPlaceValue(lowerText, labelEnd) {
 			from = labelEnd + 1
 			continue
 		}
@@ -52,6 +54,68 @@ func (d *BirthPlaceDetector) Detect(_ context.Context, text string) ([]Fragment,
 		}
 	}
 	return frags, nil
+}
+
+// hasPublicBioLinkedToClient распознаёт упоминание из публичной биографии,
+// если то же имя позже явно указано как имя клиента. Решение относится только
+// к этому упоминанию; более позднее поле клиента остаётся персональным.
+func hasPublicBioLinkedToClient(lowerText string, labelEnd int) bool {
+	before := lowerText[:labelEnd]
+	birth := strings.LastIndex(before, "родился")
+	if birth < 0 {
+		birth = strings.LastIndex(before, "родилась")
+	}
+	if birth < 0 {
+		return false
+	}
+	subject := strings.TrimSpace(before[:birth])
+	for _, marker := range []string{"клиент", "заявител", "пользователь", "сотрудник", "меня зовут", "мой "} {
+		if strings.Contains(subject, marker) {
+			return false
+		}
+	}
+	words := strings.FieldsFunc(subject, func(r rune) bool {
+		return !(r >= 'а' && r <= 'я' || r >= 'А' && r <= 'Я' || r == 'ё' || r == 'Ё' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
+	})
+	if len(words) < 2 {
+		return false
+	}
+	nameA, nameB := strings.ToLower(words[len(words)-2]), strings.ToLower(words[len(words)-1])
+	if len(nameA) < 2 || len(nameB) < 2 {
+		return false
+	}
+	after := lowerText[labelEnd:]
+	clientAt := strings.Index(after, "фио клиента")
+	if clientAt < 0 {
+		clientAt = strings.Index(after, "имя клиента")
+	}
+	if clientAt < 0 {
+		return false
+	}
+	clientField := after[clientAt:]
+	if len(clientField) > 180 {
+		clientField = clientField[:180]
+	}
+	return strings.Contains(clientField, nameA) && strings.Contains(clientField, nameB)
+}
+
+func hasHistoricalBioContext(lowerText string, labelEnd int) bool {
+	window := windowBefore(lowerText, labelEnd, 220)
+	if strings.Contains(window, "историческ") || strings.Contains(window, "биограф") {
+		return true
+	}
+	// Явно исторический год рождения отличает публичную биографию от анкеты
+	// нынешнего пользователя без списка имён.
+	for i := 0; i+4 <= len(window); i++ {
+		year := window[i : i+4]
+		if year[0] != '1' || year[1] < '0' || year[1] > '8' {
+			continue
+		}
+		if n, err := strconv.Atoi(year); err == nil && n < 1900 {
+			return true
+		}
+	}
+	return false
 }
 
 var publicRoleWords = []string{

@@ -20,6 +20,9 @@ func contactClauseBefore(text string, end, maxBytes int) string {
 	for i := end - 1; i >= start; i-- {
 		switch text[i] {
 		case '.':
+			if i > 0 && i+1 < end && isASCIILetter(text[i-1]) && isASCIILetter(text[i+1]) {
+				continue // dot inside an email/host name, not a sentence boundary
+			}
 			if (i > 0 && i+1 < end && isDigit(text[i-1]) && isDigit(text[i+1])) || isAddressAbbreviationDot(text, i) {
 				continue
 			}
@@ -36,23 +39,23 @@ func contactClauseBefore(text string, end, maxBytes int) string {
 	return text[start:end]
 }
 
-func surroundingContext(text string, start, end, maxBytes int) string {
-	left := start - maxBytes
-	if left < 0 {
-		left = 0
-	}
-	right := end + maxBytes
-	if right > len(text) {
-		right = len(text)
-	}
-	for left < start && text[left]&0xC0 == 0x80 {
-		left++
-	}
-	return strings.ToLower(text[left:right])
+func isASCIILetter(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 func isExplicitExampleContext(text string, start, end int) bool {
-	context := surroundingContext(text, start, end, 192)
+	context := contactClauseBefore(text, start, 192)
+	if end >= 0 && end < len(text) {
+		right := end + 96
+		if right > len(text) {
+			right = len(text)
+		}
+		after := text[end:right]
+		if cut := strings.IndexAny(after, ".,;!?\n\r"); cut >= 0 {
+			after = after[:cut]
+		}
+		context += " " + strings.ToLower(after)
+	}
 	return strings.Contains(context, "исключительно как пример") ||
 		(strings.Contains(context, "привед") && strings.Contains(context, "тестов")) ||
 		(strings.Contains(context, "пример") &&
@@ -65,13 +68,15 @@ func isNonPersonalEmailContext(text string, start int) bool {
 		"почта организации", "почта компании", "email организации", "e-mail организации",
 		"электронная почта организации", "электронная почта компании",
 		"почта отдела", "почта пресс-службы", "email пресс-службы", "e-mail пресс-службы",
+		"общий адрес", "адрес поддержки", "опубликованы", "публичный рабочий адрес",
 	})
 }
 
 func isNonPersonalPhoneContext(text string, start int) bool {
-	return nonPersonalContactContext(text, start, []string{
+	return isExplicitExampleContext(text, start, start+12) || nonPersonalContactContext(text, start, []string{
 		"горячая линия", "колл-центр", "контактный центр", "общий телефон", "общий номер",
 		"телефон организации", "телефон компании", "телефон банка", "номер организации", "номер компании",
-		"телефон магазина", "телефон ресторана",
+		"телефон магазина", "телефон ресторана", "телефон приёмной", "телефон приемной",
+		"приёмная", "приемная", "телефон справочной", "справочная", "опубликованы", "общий телефон",
 	})
 }

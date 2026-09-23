@@ -142,8 +142,18 @@ func TestBirthDateDetect(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "invalid date format",
+			name: "hyphen-separated date",
 			in:   "дата рождения: 15-03-1990",
+			want: []Fragment{span("дата рождения: 15-03-1990", "15-03-1990", pii.TypeBirthDate)},
+		},
+		{
+			name: "month-first hyphen-separated date",
+			in:   "дата рождения: 03-15-1990",
+			want: []Fragment{span("дата рождения: 03-15-1990", "03-15-1990", pii.TypeBirthDate)},
+		},
+		{
+			name: "invalid hyphen-separated calendar date",
+			in:   "дата рождения: 31-04-1990",
 			want: nil,
 		},
 		{

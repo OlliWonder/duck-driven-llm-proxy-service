@@ -17,7 +17,7 @@ func BenchmarkEmailDetectShort(b *testing.B) {
 	d := NewEmailDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchText)
 	}
 }
@@ -26,7 +26,7 @@ func BenchmarkEmailDetectLong(b *testing.B) {
 	d := NewEmailDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLongText)
 	}
 }
@@ -35,7 +35,7 @@ func BenchmarkPhoneDetectShort(b *testing.B) {
 	d := NewPhoneDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchText)
 	}
 }
@@ -44,7 +44,7 @@ func BenchmarkPhoneDetectLong(b *testing.B) {
 	d := NewPhoneDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLongText)
 	}
 }
@@ -53,7 +53,7 @@ func BenchmarkPhoneDetectNoMatch(b *testing.B) {
 	d := NewPhoneDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, "просто текст без персональных данных")
 	}
 }
@@ -66,7 +66,7 @@ func BenchmarkPassportDetect(b *testing.B) {
 	d := NewPassportDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchStructuredText)
 	}
 }
@@ -75,7 +75,7 @@ func BenchmarkDrivingLicenseDetect(b *testing.B) {
 	d := NewDrivingLicenseDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchStructuredText)
 	}
 }
@@ -84,7 +84,7 @@ func BenchmarkINNDetect(b *testing.B) {
 	d := NewINNDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchStructuredText)
 	}
 }
@@ -93,7 +93,7 @@ func BenchmarkCardNumberDetect(b *testing.B) {
 	d := NewCardNumberDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchStructuredText)
 	}
 }
@@ -102,7 +102,7 @@ func BenchmarkPassportDeptCodeDetect(b *testing.B) {
 	d := NewPassportDeptCodeDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchStructuredText)
 	}
 }
@@ -119,7 +119,7 @@ func BenchmarkStructuredComposite(b *testing.B) {
 		NewPassportDeptCodeDetector(),
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, d := range detectors {
 			_, _ = d.Detect(ctx, benchStructuredText)
 		}
@@ -133,7 +133,7 @@ func BenchmarkFullNameDetect(b *testing.B) {
 	d := NewFullNameDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -142,7 +142,7 @@ func BenchmarkCardHolderDetect(b *testing.B) {
 	d := NewCardHolderDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -151,7 +151,7 @@ func BenchmarkBirthDateDetect(b *testing.B) {
 	d := NewBirthDateDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -160,7 +160,7 @@ func BenchmarkPassportIssueDateDetect(b *testing.B) {
 	d := NewPassportIssueDateDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -169,7 +169,7 @@ func BenchmarkCitizenshipDetect(b *testing.B) {
 	d := NewCitizenshipDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -178,7 +178,7 @@ func BenchmarkBirthPlaceDetect(b *testing.B) {
 	d := NewBirthPlaceDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -187,7 +187,7 @@ func BenchmarkPassportIssuerDetect(b *testing.B) {
 	d := NewPassportIssuerDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -196,7 +196,7 @@ func BenchmarkAddressDetect(b *testing.B) {
 	d := NewAddressDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -205,7 +205,7 @@ func BenchmarkPINDetect(b *testing.B) {
 	d := NewPINDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -214,7 +214,7 @@ func BenchmarkCVVDetect(b *testing.B) {
 	d := NewCVVDetector()
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = d.Detect(ctx, benchLabeledText)
 	}
 }
@@ -235,7 +235,7 @@ func BenchmarkLabeledComposite(b *testing.B) {
 		NewCVVDetector(),
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, d := range detectors {
 			_, _ = d.Detect(ctx, benchLabeledText)
 		}

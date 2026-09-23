@@ -73,10 +73,11 @@ func TestComplianceAllTypes(t *testing.T) {
 
 		// --- birth_date ---
 		{typ: pii.TypeBirthDate, in: "дата рождения: 15.03.1990", want: 1},
-		{typ: pii.TypeBirthDate, in: "дата рождения: 1990-03-15", want: 1}, // ISO
-		{typ: pii.TypeBirthDate, in: "дата рождения: 15/03/1990", want: 1}, // слэш
+		{typ: pii.TypeBirthDate, in: "дата рождения: 1990-03-15", want: 1},                  // ISO
+		{typ: pii.TypeBirthDate, in: "дата рождения: 15-03-1990", want: 1},                  // с дефисами
+		{typ: pii.TypeBirthDate, in: "дата рождения: 15/03/1990", want: 1},                  // слэш
 		{typ: pii.TypeBirthDate, in: "дата рождения: пятнадцатое марта 1990 года", want: 1}, // текстом
-		{typ: pii.TypeBirthDate, in: "число 15.03.1990", want: 0},          // без подписи
+		{typ: pii.TypeBirthDate, in: "число 15.03.1990", want: 0},                           // без подписи
 
 		// --- birth_place ---
 		{typ: pii.TypeBirthPlace, in: "место рождения: г. Москва", want: 1},

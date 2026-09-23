@@ -47,7 +47,7 @@ func hasDrivingLicenseContext(text string, start int) bool {
 			return false
 		}
 	}
-	drivingPos := maxLastIndex(lower, "водительск", "удостоверение водителя", "права", "driver license", "в/у", " ву", "ву:", "ву ")
+	drivingPos := maxLastIndex(lower, "водительск", "водитель", "удостоверение водителя", "права", "driver license", "в/у", " ву", "ву:", "ву ")
 	if pos := lastBoundedIndex(lower, "ву"); pos > drivingPos {
 		drivingPos = pos
 	}

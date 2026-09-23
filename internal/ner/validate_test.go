@@ -365,3 +365,23 @@ func TestValidateRunnerNameContexts(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePublicAuthorAppositive(t *testing.T) {
+	text := `Сотрудник переслал письмо: «Свяжитесь с Марией Ивановой, автором доклада; её публичный рабочий адрес press@example.org».`
+	name := "Марией Ивановой"
+	start := strings.Index(text, name)
+	candidate := Candidate{Label: LabelPER, Start: start, End: start + len(name), Text: name}
+	if got := NewValidator().Validate(text, []Candidate{candidate}); len(got) != 0 {
+		t.Fatalf("public author's name should remain public: %+v", got)
+	}
+}
+
+func TestValidatePublicBirthplaceLinkedToClient(t *testing.T) {
+	text := "Александр Пушкин родился в Москве. ФИО клиента: Пушкин Александр Сергеевич; дата рождения клиента 06.06.1990."
+	place := "Москве"
+	start := strings.Index(text, place)
+	candidate := Candidate{Label: LabelLOC, Start: start, End: start + len(place), Text: place}
+	if got := NewValidator().Validate(text, []Candidate{candidate}); len(got) != 0 {
+		t.Fatalf("public biography birthplace should remain public: %+v", got)
+	}
+}

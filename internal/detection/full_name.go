@@ -10,6 +10,7 @@ import (
 // fullNameLabels — подписи поля ФИО.
 var fullNameLabels = []string{
 	"имя клиента", "фамилия клиента", "получатель платежа", "меня зовут",
+	"контактное лицо", "фио истца", "истец", "ответчик", "client_name", "добрый день", "здравствуйте",
 	"ф.и.о.", "фио", "имя", "фамилия",
 }
 
@@ -33,6 +34,10 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 		if labelEnd < 0 {
 			break
 		}
+		if strings.HasSuffix(lowerText[:labelEnd], "client_name") && !isJSONStringKey(lowerText, labelEnd, "client_name") {
+			from = labelEnd
+			continue
+		}
 		valStart := fullNameValueStart(text, labelEnd)
 		valStart = skipValueIntroducer(text, lowerText, valStart)
 		// A role or card owner between the generic "имя" label and the
@@ -51,6 +56,18 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 		}
 	}
 	return frags, nil
+}
+
+func isJSONStringKey(lowerText string, labelEnd int, key string) bool {
+	start := labelEnd - len(key)
+	if start <= 0 || start+len(key) >= len(lowerText) || lowerText[start-1] != '"' || lowerText[start+len(key)] != '"' {
+		return false
+	}
+	i := start + len(key) + 1
+	for i < len(lowerText) && (lowerText[i] == ' ' || lowerText[i] == '\t' || lowerText[i] == '\n') {
+		i++
+	}
+	return i < len(lowerText) && lowerText[i] == ':'
 }
 
 func hasNonPersonalNameFieldOwner(owner string) bool {

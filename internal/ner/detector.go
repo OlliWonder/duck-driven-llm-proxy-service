@@ -43,7 +43,7 @@ func NewDetector(client *Client) *Detector {
 // NER. Жизненным циклом клиента управляет сервис: при остановке он должен
 // вызвать Client.Close.
 func NewProductionDetector(client *Client) detection.Detector {
-	return detection.NewComposite(detection.NewRuleBasedDetector(), NewDetector(client))
+	return detection.NewPreferredDetector(detection.NewRuleBasedDetector(), NewDetector(client))
 }
 
 // NewDetectorWithCache создаёт NER-детектор с заданным кешем.

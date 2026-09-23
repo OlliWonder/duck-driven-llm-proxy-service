@@ -16,6 +16,7 @@
 package ner
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -95,6 +96,18 @@ func trimCandidateRolePrefix(text string, candidate Candidate) Candidate {
 // decide возвращает тип ПДН для кандидата или false, если кандидат не является
 // ПДН в данном контексте.
 func (v *Validator) decide(text string, c Candidate) (pii.Type, bool) {
+	if candidateInsideEmail(text, c.Start, c.End) {
+		return "", false
+	}
+	if c.Label == LabelPER && isPublicAuthorJSONValue(text, c.Start) {
+		return "", false
+	}
+	if c.Label == LabelLOC && hasPublicBirthplaceLinkedToClient(text, c.Start) {
+		return "", false
+	}
+	if c.Label == LabelPER && hasPublicAppositiveAfter(text, c.End) && !hasPersonalRoleBefore(text, c.Start) {
+		return "", false
+	}
 	sigs := signaturesFor(c.Label)
 	if len(sigs) == 0 {
 		return "", false
@@ -142,6 +155,10 @@ func (v *Validator) decide(text string, c Candidate) (pii.Type, bool) {
 	default:
 		return "", false
 	}
+	if sig.typ == "" && c.Label == LabelPER &&
+		(hasPublicAppositiveAfter(text, c.End) || containsPublicRole(strings.ToLower(text[c.Start:c.End]))) {
+		return "", false
+	}
 
 	selectedLeft := leftOK && sig == leftSig && (!rightOK || leftDist <= rightDist)
 	if signatureNegated(before, after, sig, leftDist, rightDist, selectedLeft) {
@@ -153,10 +170,164 @@ func (v *Validator) decide(text string, c Candidate) (pii.Type, bool) {
 	if sig.typ == "" {
 		return "", false
 	}
-	if c.Label == LabelLOC && containsPublicRole(strings.ToLower(text[partStart:partEnd])) {
+	if c.Label == LabelLOC && (containsPublicRole(strings.ToLower(text[partStart:partEnd])) ||
+		(sig.typ == pii.TypeBirthPlace && historicalBirthContext(text, c.Start))) {
 		return "", false
 	}
 	return sig.typ, true
+}
+
+// isPublicAuthorJSONValue оставляет явно публичные метаданные JSON открытыми.
+// Соседнее поле client_name проверяется отдельно по обычным правилам поиска
+// персональных данных.
+func isPublicAuthorJSONValue(text string, start int) bool {
+	if start < 0 || start > len(text) {
+		return false
+	}
+	prefix := strings.ToLower(detectionWindowBefore(text, start, 128))
+	key := strings.LastIndex(prefix, `"public_author"`)
+	if key < 0 || strings.ContainsAny(prefix[key+len(`"public_author"`):], "{}") {
+		return false
+	}
+	between := strings.TrimSpace(prefix[key+len(`"public_author"`):])
+	return strings.HasPrefix(between, ":")
+}
+
+func hasPublicBirthplaceLinkedToClient(text string, start int) bool {
+	if start < 0 || start > len(text) {
+		return false
+	}
+	before := strings.ToLower(detectionWindowBefore(text, start, 220))
+	birth := strings.LastIndex(before, "родился")
+	if birth < 0 {
+		birth = strings.LastIndex(before, "родилась")
+	}
+	if birth < 0 {
+		return false
+	}
+	subject := strings.Fields(before[:birth])
+	if len(subject) < 2 {
+		return false
+	}
+	first, surname := subject[len(subject)-2], subject[len(subject)-1]
+	for _, suffix := range []string{",", ".", ":", "—", "-", "«", "»", `"`} {
+		first = strings.Trim(first, suffix)
+		surname = strings.Trim(surname, suffix)
+	}
+	if len(first) < 3 || len(surname) < 3 {
+		return false
+	}
+	afterEnd := start + 512
+	if afterEnd > len(text) {
+		afterEnd = len(text)
+	}
+	after := strings.ToLower(text[start:afterEnd])
+	field := strings.Index(after, "фио клиента")
+	if field < 0 {
+		field = strings.Index(after, "имя клиента")
+	}
+	if field < 0 {
+		return false
+	}
+	end := field + 180
+	if end > len(after) {
+		end = len(after)
+	}
+	client := after[field:end]
+	return strings.Contains(client, first) && strings.Contains(client, surname)
+}
+
+func detectionWindowBefore(text string, end, maxBytes int) string {
+	start := end - maxBytes
+	if start < 0 {
+		start = 0
+	}
+	for start < end && text[start]&0xC0 == 0x80 {
+		start++
+	}
+	return text[start:end]
+}
+
+func historicalBirthContext(text string, start int) bool {
+	from := clauseStart(text, start)
+	before := strings.ToLower(text[from:start])
+	if strings.Contains(before, "историческ") || strings.Contains(before, "биограф") {
+		return true
+	}
+	for i := from; i+4 <= start; i++ {
+		if text[i] < '0' || text[i] > '9' || i > from && text[i-1] >= '0' && text[i-1] <= '9' {
+			continue
+		}
+		if i+4 < len(text) && text[i+4] >= '0' && text[i+4] <= '9' {
+			continue
+		}
+		year, err := strconv.Atoi(text[i : i+4])
+		if err == nil && year >= 1000 && year < 1900 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPublicAppositiveAfter(text string, end int) bool {
+	if end >= len(text) || text[end] != ',' {
+		return false
+	}
+	limit := end + 96
+	if limit > len(text) {
+		limit = len(text)
+	}
+	for i := end + 1; i < limit; i++ {
+		if text[i] == ';' || text[i] == '.' || text[i] == '!' || text[i] == '?' || text[i] == '\n' {
+			limit = i
+			break
+		}
+	}
+	clause := strings.ToLower(text[end+1 : limit])
+	for _, role := range []string{"автор", "автором", "писатель", "поэт", "режиссёр", "режиссер", "художник", "учёный", "ученый"} {
+		if firstSignatureIndex(clause, role) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPersonalRoleBefore(text string, start int) bool {
+	from := clauseStart(text, start)
+	if colon := strings.LastIndexAny(text[from:start], ":;.!?\n"); colon >= 0 {
+		from += colon + 1
+	}
+	before := strings.ToLower(text[from:start])
+	for _, role := range []string{"клиент", "заявитель", "заёмщик", "заемщик", "пользователь", "сотрудник", "истец", "ответчик"} {
+		if strings.Contains(before, role) {
+			return true
+		}
+	}
+	return false
+}
+
+// Slovnet может принять часть адреса электронной почты (например, «press» в
+// press@example.org) за место. Не даём NER разделить адрес: детектор почты сам
+// решает, является ли весь адрес персональными данными.
+func candidateInsideEmail(text string, start, end int) bool {
+	left := start
+	for left > 0 && isEmailByte(text[left-1]) {
+		left--
+	}
+	right := end
+	for right < len(text) && isEmailByte(text[right]) {
+		right++
+	}
+	if left >= right {
+		return false
+	}
+	value := text[left:right]
+	return strings.Contains(value, "@") && strings.Contains(value, ".")
+}
+
+func isEmailByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' ||
+		strings.ContainsRune("._%+-@", rune(b))
 }
 
 func appositiveSignatureContext(text string, candidateStart int) string {
@@ -347,6 +518,7 @@ func signaturesFor(label Label) []signature {
 
 // Подписи PER: положительные (личные данные) и отрицательные (публичная фигура).
 var perSignatures = []signature{
+	{text: "public_author"},
 	// Положительные → card_holder.
 	{text: "держатель карты", typ: pii.TypeCardHolder},
 	{text: "имя держателя", typ: pii.TypeCardHolder},
@@ -358,6 +530,11 @@ var perSignatures = []signature{
 	{text: "клиенту", typ: pii.TypeFullName},
 	{text: "клиентом", typ: pii.TypeFullName},
 	{text: "клиент", typ: pii.TypeFullName},
+	{text: "контактное лицо", typ: pii.TypeFullName},
+	{text: "истец", typ: pii.TypeFullName},
+	{text: "ответчик", typ: pii.TypeFullName},
+	{text: "директор", typ: pii.TypeFullName},
+	{text: "client_name", typ: pii.TypeFullName},
 	{text: "владелец", typ: pii.TypeFullName},
 	{text: "пациент", typ: pii.TypeFullName},
 	{text: "сотрудник", typ: pii.TypeFullName},
@@ -404,6 +581,7 @@ var perSignatures = []signature{
 	{text: "генерал"},
 	{text: "спортсмен"},
 	{text: "автор"},
+	{text: "автором"},
 	{text: "классик"},
 	{text: "деятель"},
 	{text: "премьер"},
@@ -425,6 +603,10 @@ var publicPersonSignatures = []string{
 // Подписи LOC: положительные (адрес/место человека) и отрицательные (адрес
 // организации).
 var locSignatures = []signature{
+	// Адрес регистрации организации — общедоступные сведения о компании.
+	{text: "компания зарегистрирована"},
+	{text: "организация зарегистрирована"},
+	{text: "адрес редакции"},
 	// Положительные → birth_place.
 	{text: "место рождения", typ: pii.TypeBirthPlace},
 	{text: "родился", typ: pii.TypeBirthPlace},
@@ -434,6 +616,8 @@ var locSignatures = []signature{
 	{text: "адрес регистрации", typ: pii.TypeAddress},
 	{text: "адрес проживания", typ: pii.TypeAddress},
 	{text: "проживает", typ: pii.TypeAddress},
+	{text: "живёт", typ: pii.TypeAddress},
+	{text: "живет", typ: pii.TypeAddress},
 	{text: "зарегистрирован", typ: pii.TypeAddress},
 	{text: "зарегистрирована", typ: pii.TypeAddress},
 	{text: "прописан", typ: pii.TypeAddress},

@@ -39,13 +39,6 @@ func (d *PassportDetector) Detect(_ context.Context, text string) ([]Fragment, e
 	return frags, nil
 }
 
-// scanSeriesNumberSplit распознаёт формат «серия XXXX номер YYYYYY», начиная с
-// позиции start (первая цифра серии). Возвращает конец номера (исключительно)
-// и признак успеха.
-func scanSeriesNumberSplit(text string, start int) (int, bool) {
-	return scanSeriesNumber(text, start)
-}
-
 // scanSeriesNumber распознаёт формат "4 цифры [разделитель] 6 цифр",
 // начиная с позиции start. Возвращает конец (исключительно) и признак успеха.
 func scanSeriesNumber(text string, start int) (int, bool) {

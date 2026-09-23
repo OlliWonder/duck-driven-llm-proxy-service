@@ -7,7 +7,7 @@ import (
 )
 
 // scanDate распознаёт дату в числовом формате, начиная с start. Поддерживаются
-// порядки: ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, ДД/ММ/ГГГГ (и короткий год ГГ).
+// форматы ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, ДД/ММ/ГГГГ и ДД-ММ-ГГГГ.
 // Возвращает конец даты (исключительно) и признак успеха.
 func scanDate(text string, start int) (int, bool) {
 	// ДД.ММ.ГГГГ / ДД.ММ.ГГ
@@ -18,7 +18,7 @@ func scanDate(text string, start int) (int, bool) {
 	if end, ok := scanISODate(text, start); ok {
 		return end, true
 	}
-	// ДД-ММ-ГГГГ / ММ-ДД-ГГГГ
+	// ДД-ММ-ГГГГ или ММ-ДД-ГГГГ.
 	if end, ok := scanHyphenDate(text, start); ok {
 		return end, true
 	}

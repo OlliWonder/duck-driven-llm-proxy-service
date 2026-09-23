@@ -45,6 +45,42 @@ type Composite struct {
 	detectors []Detector
 }
 
+// PreferredDetector объединяет доверенный структурный детектор с контекстным
+// fallback-детектором. Если фрагмент точного детектора пересекается с NER span,
+// сохраняется структурный фрагмент: NER не должен разрезать email или телефон.
+type PreferredDetector struct {
+	preferred Detector
+	fallback  Detector
+}
+
+func NewPreferredDetector(preferred, fallback Detector) Detector {
+	return &PreferredDetector{preferred: preferred, fallback: fallback}
+}
+
+func (d *PreferredDetector) Detect(ctx context.Context, text string) ([]Fragment, error) {
+	preferred, err := d.preferred.Detect(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	fallback, err := d.fallback.Detect(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range fallback {
+		blocked := false
+		for _, p := range preferred {
+			if f.Start < p.End && p.Start < f.End {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			preferred = append(preferred, f)
+		}
+	}
+	return Merge(preferred), nil
+}
+
 // NewComposite создаёт композит из переданных детекторов.
 func NewComposite(detectors ...Detector) *Composite {
 	return &Composite{detectors: detectors}

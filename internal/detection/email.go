@@ -4,6 +4,8 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 )
@@ -26,21 +28,49 @@ func (d *EmailDetector) Detect(_ context.Context, text string) ([]Fragment, erro
 	}
 	frags := make([]Fragment, 0, len(locs))
 	for _, loc := range locs {
-		if validEmailCandidate(text, loc[0], loc[1]) && !isNonPersonalEmailContext(text, loc[0]) {
+		if validEmailCandidate(text, loc[0], loc[1]) && !isNonPersonalEmailContext(text, loc[0]) &&
+			!isGenericMailbox(text[loc[0]:loc[1]]) && !isEmailInsideDocumentationExample(text, loc[0]) {
 			frags = append(frags, Fragment{Type: pii.TypeEmail, Start: loc[0], End: loc[1]})
 		}
 	}
 	return frags, nil
 }
 
-func validEmailCandidate(text string, start, end int) bool {
-	if start > 0 && (isWordByte(text[start-1]) || text[start-1] == '.') {
+func isEmailInsideDocumentationExample(text string, start int) bool {
+	clause := strings.ToLower(contactClauseBefore(text, start, 512))
+	return strings.Contains(clause, "документац") && strings.Contains(clause, "пример")
+}
+
+// Общие почтовые ящики — это адреса организации, а не отдельных людей.
+// Список исключений намеренно короткий: персональные адреса с именем
+// владельца маскируются по формату, даже в публичном контексте.
+func isGenericMailbox(email string) bool {
+	local, _, ok := strings.Cut(strings.ToLower(email), "@")
+	if !ok {
 		return false
+	}
+	switch local {
+	case "info", "support", "press", "contact", "sales", "help", "noreply", "no-reply":
+		return true
+	default:
+		return false
+	}
+}
+
+func validEmailCandidate(text string, start, end int) bool {
+	if start > 0 {
+		previous, _ := utf8.DecodeLastRuneInString(text[:start])
+		if unicode.IsLetter(previous) || unicode.IsDigit(previous) || previous == '_' || previous == '.' {
+			return false
+		}
 	}
 	// A dot immediately after a complete address is normal sentence
 	// punctuation. The regexp already consumes dots that belong to the domain.
-	if end < len(text) && isWordByte(text[end]) {
-		return false
+	if end < len(text) {
+		next, _ := utf8.DecodeRuneInString(text[end:])
+		if unicode.IsLetter(next) || unicode.IsDigit(next) || next == '_' {
+			return false
+		}
 	}
 	parts := strings.Split(text[start:end], "@")
 	if len(parts) != 2 || parts[0] == "" || len(parts[0]) > 64 || strings.HasPrefix(parts[0], ".") ||

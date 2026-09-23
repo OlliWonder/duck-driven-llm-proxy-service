@@ -7,6 +7,7 @@
 # Dependencies
 node_modules/
 .venv/
+.venv-ner/
 venv/
 env/
 

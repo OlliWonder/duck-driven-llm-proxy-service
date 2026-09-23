@@ -6,12 +6,6 @@ import (
 	"unicode/utf8"
 )
 
-// labelMatch описывает найденную подпись поля.
-type labelMatch struct {
-	// labelEnd — байтовая позиция сразу после подписи (до разделителей).
-	labelEnd int
-}
-
 // findLabel ищет первую подпись из labels в lowerText (текст в нижнем
 // регистре), начиная с позиции from. Возвращает позицию сразу после подписи
 // или -1.
@@ -123,49 +117,6 @@ func skipValueIntroducer(text, lowerText string, start int) int {
 	return start
 }
 
-// isCyrillicLetter сообщает, является ли байт частью кириллической буквы
-// (первый байт 0xD0–0xD1 или второй байт 0x80–0xBF в UTF-8).
-func isCyrillicLetter(b byte) bool {
-	return b >= 0x80 && b <= 0xFF
-}
-
-// isLatinLetter сообщает, является ли байт латинской буквой.
-func isLatinLetter(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
-}
-
-// isLetter сообщает, является ли байт буквой (кириллица или латиница).
-func isLetter(b byte) bool {
-	return isCyrillicLetter(b) || isLatinLetter(b)
-}
-
-// isLetterAt сообщает, является ли символ в позиции i буквой (кириллица или
-// латиница), в любом регистре.
-func isLetterAt(text string, i int) bool {
-	if i >= len(text) {
-		return false
-	}
-	return isLetter(text[i])
-}
-
-// isUpperAt сообщает, является ли символ в позиции i заглавной буквой
-// (кириллица или латиница).
-func isUpperAt(text string, i int) bool {
-	if i >= len(text) {
-		return false
-	}
-	b := text[i]
-	if b >= 'A' && b <= 'Z' {
-		return true
-	}
-	// Кириллица: заглавные буквы А-Я = 0xD0 0x90–0xAF, Ё = 0xD0 0x81.
-	if b == 0xD0 && i+1 < len(text) {
-		c := text[i+1]
-		return (c >= 0x90 && c <= 0xAF) || c == 0x81
-	}
-	return false
-}
-
 // isValueSeparator сообщает, является ли байт разделителем значения.
 func isValueSeparator(b byte) bool {
 	return b == ',' || b == ';' || b == '.' || b == '\n' || b == '\r'
@@ -202,6 +153,11 @@ func scanTextValueKeepDot(text string, start int) (int, bool) {
 	i := start
 	for i < len(text) {
 		c := text[i]
+		if c >= '0' && c <= '9' {
+			if _, ok := scanDate(text, i); ok {
+				break
+			}
+		}
 		if c == ',' || c == ';' || c == '\n' || c == '\r' || (c == '.' && !isAddressAbbreviationDot(text, i)) {
 			break
 		}
@@ -226,6 +182,11 @@ func scanAddressValue(text string, start int) (int, bool) {
 	i := start
 	for i < len(text) {
 		c := text[i]
+		if c >= '0' && c <= '9' {
+			if _, ok := scanDate(text, i); ok {
+				break
+			}
+		}
 		if c == ' ' && startsFollowingPIIField(text[i:]) {
 			break
 		}
@@ -253,6 +214,7 @@ func startsFollowingPIIField(text string) bool {
 	lower := strings.ToLower(text)
 	for _, prefix := range []string{
 		" и номер карты", " и банковская карта", " и карта", " и телефон", " и номер телефона",
+		" и мобильный номер", " и мобильный телефон", " и мобильный",
 		" и email", " и e-mail", " и электронная почта", " и инн", " и cvv", " и cvc", " и pin", " и пин",
 	} {
 		if strings.HasPrefix(lower, prefix) {
