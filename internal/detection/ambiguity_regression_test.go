@@ -134,3 +134,77 @@ func TestRegressionOrganizationBranchAddressDoesNotMaskNameOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestRegressionClientPipeRecordMasksUnlabeledBirthDate(t *testing.T) {
+	text := "Клиент | Иван Петров | +7 927 123-45-67 | 15.03.1990"
+	frags, err := NewBirthDateDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frags) != 1 || text[frags[0].Start:frags[0].End] != "15.03.1990" {
+		t.Fatalf("дата в строке клиента не распознана: %+v", frags)
+	}
+}
+
+func TestRegressionDocumentationTestCardRemainsPublic(t *testing.T) {
+	text := "Тестовая карта 4111 1111 1111 1111 из документации"
+	frags, err := NewCardNumberDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frags) != 0 {
+		t.Fatalf("тестовый номер из документации ошибочно замаскирован: %+v", frags)
+	}
+	text = "Карта клиента 4111 1111 1111 1111"
+	frags, err = NewCardNumberDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frags) != 1 || text[frags[0].Start:frags[0].End] != "4111 1111 1111 1111" {
+		t.Fatalf("номер карты клиента не распознан: %+v", frags)
+	}
+}
+
+func TestRegressionRegistrationAndResidenceAddressKeepsFullLabelAndValue(t *testing.T) {
+	text := "Адрес регистрации и проживания клиента: Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47. Для связи указан телефон +7 927 123-45-67."
+	frags, err := NewAddressDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47"
+	if len(frags) != 1 || text[frags[0].Start:frags[0].End] != want {
+		t.Fatalf("неверный фрагмент адреса: %+v; текст=%q", frags, text)
+	}
+}
+
+func TestRegressionPINWithEmDash(t *testing.T) {
+	text := "PIN-код — 4827. После проверки данные подтверждены."
+	frags, err := NewPINDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frags) != 1 || text[frags[0].Start:frags[0].End] != "4827" {
+		t.Fatalf("PIN-код не распознан: %+v", frags)
+	}
+}
+
+func TestRegressionAddressDoesNotSwallowLaterPIN(t *testing.T) {
+	text := "Адрес регистрации и проживания клиента: Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47. PIN-код — 4827."
+	frags, err := NewRuleBasedDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundAddress, foundPIN := false, false
+	for _, f := range frags {
+		value := text[f.Start:f.End]
+		if f.Type == pii.TypeAddress && value == "Самарская область, г. Тольятти, ул. Революционная, д. 25, кв. 47" {
+			foundAddress = true
+		}
+		if f.Type == pii.TypePIN && value == "4827" {
+			foundPIN = true
+		}
+	}
+	if !foundAddress || !foundPIN {
+		t.Fatalf("адрес или PIN потерян при объединении фрагментов: %+v", frags)
+	}
+}

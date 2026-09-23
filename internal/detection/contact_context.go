@@ -44,7 +44,7 @@ func isASCIILetter(b byte) bool {
 }
 
 func isExplicitExampleContext(text string, start, end int) bool {
-	context := contactClauseBefore(text, start, 192)
+	context := strings.ToLower(contactClauseBefore(text, start, 192))
 	if end >= 0 && end < len(text) {
 		right := end + 96
 		if right > len(text) {
@@ -58,6 +58,7 @@ func isExplicitExampleContext(text string, start, end int) bool {
 	}
 	return strings.Contains(context, "исключительно как пример") ||
 		(strings.Contains(context, "привед") && strings.Contains(context, "тестов")) ||
+		(strings.Contains(context, "тестовая карта") && strings.Contains(context, "документац")) ||
 		(strings.Contains(context, "пример") &&
 			(strings.Contains(context, "инструкц") || strings.Contains(context, "документац")))
 }

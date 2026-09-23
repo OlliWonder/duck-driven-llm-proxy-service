@@ -55,7 +55,33 @@ func (d *BirthDateDetector) Detect(_ context.Context, text string) ([]Fragment, 
 			from = labelEnd + 1
 		}
 	}
+	// В короткой табличной строке дата рождения может быть последним столбцом без подписи.
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
+			continue
+		}
+		end, ok := scanDate(text, i)
+		if ok && hasDelimitedClientDate(text, lowerText, i, end) {
+			frags = append(frags, Fragment{Type: pii.TypeBirthDate, Start: i, End: end})
+			i = end - 1
+		}
+	}
 	return frags, nil
+}
+
+func hasDelimitedClientDate(text, lowerText string, start, end int) bool {
+	if start == 0 || end < len(text) && text[end] != ' ' && text[end] != '\t' && text[end] != '|' && text[end] != '\n' && text[end] != '.' {
+		return false
+	}
+	left := strings.LastIndex(text[:start], "|")
+	if left < 0 || strings.TrimSpace(text[left+1:start]) != "" {
+		return false
+	}
+	rowStart := strings.LastIndexAny(text[:left], "\n\r") + 1
+	if strings.Count(text[rowStart:left], "|") < 1 {
+		return false
+	}
+	return strings.Contains(lowerText[rowStart:left], "клиент")
 }
 
 func hasBirthVerbLabel(lowerText string, labelEnd int) bool {
