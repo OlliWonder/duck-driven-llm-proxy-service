@@ -1,0 +1,33 @@
+# Build artifacts
+/bin/
+*.exe
+*.test
+*.out
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+env/
+
+# Build dirs
+target/
+build/
+dist/
+out/
+bin/
+obj/
+
+# Service dirs
+.git/
+.idea/
+__pycache__/
+coverage/
+
+# Local config with secrets
+config.local.json
+*.local.json
+
+# NER sidecar (model archives are versioned for reproducible container builds)
+ner/*.log
+ner/__pycache__/

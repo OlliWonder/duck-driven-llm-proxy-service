@@ -1,0 +1,309 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/duck-driven-llm-proxy-service/internal/detection"
+	"github.com/duck-driven-llm-proxy-service/internal/masking"
+	"github.com/duck-driven-llm-proxy-service/internal/metrics"
+	"github.com/duck-driven-llm-proxy-service/internal/pii"
+	"github.com/duck-driven-llm-proxy-service/internal/policy"
+	"github.com/duck-driven-llm-proxy-service/internal/store"
+	"github.com/duck-driven-llm-proxy-service/internal/tempdetect"
+)
+
+type fakeDetector struct {
+	frags []detection.Fragment
+	err   error
+}
+
+func (f *fakeDetector) Detect(_ context.Context, _ string) ([]detection.Fragment, error) {
+	return f.frags, f.err
+}
+
+func newTestService(det detection.Detector, pol *policy.Manager) *Service {
+	key := bytes.Repeat([]byte{0x42}, 32)
+	st, _ := store.New(key, time.Hour, 1000)
+	return NewService(det, st, pol, metrics.New())
+}
+
+func defaultPolicyManager() *policy.Manager {
+	m := policy.NewManager()
+	m.SetPolicy("default", policy.Default())
+	return m
+}
+
+func TestMaskThenDemask(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-1", "default")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask == text {
+		t.Fatal("mask equals original")
+	}
+	orig, err := svc.Process(context.Background(), mask, "id-1", "default")
+	if err != nil {
+		t.Fatalf("demask: %v", err)
+	}
+	if orig != text {
+		t.Fatalf("demask mismatch:\n got %q\nwant %q", orig, text)
+	}
+}
+
+func TestIdempotentMasking(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask1, _ := svc.Process(context.Background(), text, "id-1", "default")
+	// Повтор оригинала → та же маска.
+	mask2, err := svc.Process(context.Background(), text, "id-1", "default")
+	if err != nil {
+		t.Fatalf("repeat mask: %v", err)
+	}
+	if mask1 != mask2 {
+		t.Fatalf("idempotent masking violated:\n %q\n %q", mask1, mask2)
+	}
+}
+
+func TestIdempotentDemasking(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask, _ := svc.Process(context.Background(), text, "id-1", "default")
+	orig1, _ := svc.Process(context.Background(), mask, "id-1", "default")
+	orig2, err := svc.Process(context.Background(), mask, "id-1", "default")
+	if err != nil {
+		t.Fatalf("repeat demask: %v", err)
+	}
+	if orig1 != orig2 || orig1 != text {
+		t.Fatalf("idempotent demasking violated: %q %q", orig1, orig2)
+	}
+}
+
+func TestUnicodeRoundtrip(t *testing.T) {
+	text := "Привет, Иван Иванович, email test@mail.ru"
+	emailStart := len("Привет, Иван Иванович, email ")
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: emailStart, End: len(text)},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-u", "default")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	orig, err := svc.Process(context.Background(), mask, "id-u", "default")
+	if err != nil {
+		t.Fatalf("demask: %v", err)
+	}
+	if orig != text {
+		t.Fatalf("unicode roundtrip mismatch:\n got %q\nwant %q", orig, text)
+	}
+}
+
+func TestRestoreModifiedTextByTokens(t *testing.T) {
+	// LLM может изменить текст между маскированием и демаскированием,
+	// но токены сохраняются. Восстановление должно работать по токенам.
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-mod", "default")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask == text {
+		t.Fatal("mask equals original")
+	}
+
+	// LLM перефразировал текст, но оставил токен.
+	modified := "Пожалуйста, свяжитесь с клиентом по адресу " + mask + " спасибо"
+	restored, err := svc.Process(context.Background(), modified, "id-mod", "default")
+	if err != nil {
+		t.Fatalf("restore modified: %v", err)
+	}
+	want := "Пожалуйста, свяжитесь с клиентом по адресу email test@mail.ru спасибо"
+	if restored != want {
+		t.Fatalf("token restore mismatch:\n got %q\nwant %q", restored, want)
+	}
+}
+
+func TestRestoreModifiedTextNoTokens(t *testing.T) {
+	// Если LLM удалил токены полностью, восстановление невозможно —
+	// текст не содержит токенов, значит это новый маскинг для того же id.
+	// Используем реальный временный детектор, который находит email только там,
+	// где он действительно есть.
+	text := "email test@mail.ru"
+	svc := newTestService(tempdetect.New(), defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-notok", "default")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask == text {
+		t.Fatal("mask equals original")
+	}
+
+	// Текст без токенов и не равный оригиналу → новая операция маскирования.
+	newText := "совсем другой текст"
+	res, err := svc.Process(context.Background(), newText, "id-notok", "default")
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if res != newText {
+		t.Fatalf("expected new masking to return unchanged text, got %q", res)
+	}
+	_ = mask
+}
+
+func TestConcurrentSameID(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	svc := newTestService(det, defaultPolicyManager())
+
+	var wg sync.WaitGroup
+	results := make([]string, 40)
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			mask, err := svc.Process(context.Background(), text, "id-c", "default")
+			if err != nil {
+				t.Errorf("mask %d: %v", i, err)
+				return
+			}
+			results[i] = mask
+		}(i)
+	}
+	wg.Wait()
+	for i := 1; i < len(results); i++ {
+		if results[i] != results[0] {
+			t.Fatalf("concurrent masking not deterministic: %q vs %q", results[i], results[0])
+		}
+	}
+}
+
+func TestPolicyRestoreForbidden(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	m := policy.NewManager()
+	p := policy.Default()
+	p.RestoreAllowed = false
+	m.SetPolicy("no-restore", p)
+	svc := newTestService(det, m)
+
+	mask, err := svc.Process(context.Background(), text, "id-1", "no-restore")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	_, err = svc.Process(context.Background(), mask, "id-1", "no-restore")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestConsumerIsolation(t *testing.T) {
+	// Потребитель A маскирует; потребитель B с тем же payload_id не должен
+	// иметь возможности восстановить данные A.
+	text := "email test@mail.ru"
+	det := tempdetect.New()
+	svc := newTestService(det, defaultPolicyManager())
+
+	mask, err := svc.Process(context.Background(), text, "id-iso", "consumer-a")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	// Потребитель B пытается восстановить, используя тот же payload_id.
+	got, err := svc.Process(context.Background(), mask, "id-iso", "consumer-b")
+	if err != nil {
+		t.Fatalf("consumer-b request failed: %v", err)
+	}
+	if got == text {
+		t.Fatal("consumer-b restored consumer-a personal data")
+	}
+	if strings.Contains(got, "test@mail.ru") {
+		t.Fatalf("consumer-b result contains consumer-a personal data: %q", got)
+	}
+}
+
+func TestPolicyTypeFiltering(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	m := policy.NewManager()
+	p := policy.Default()
+	p.Types = []pii.Type{pii.TypePhone} // email не разрешён
+	m.SetPolicy("phone-only", p)
+	svc := newTestService(det, m)
+
+	mask, err := svc.Process(context.Background(), text, "id-1", "phone-only")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask != text {
+		t.Fatalf("email should not be masked when policy excludes it, got %q", mask)
+	}
+}
+
+func TestMaskModePolicy(t *testing.T) {
+	text := "email test@mail.ru"
+	det := &fakeDetector{frags: []detection.Fragment{
+		{Type: pii.TypeEmail, Start: 6, End: 18},
+	}}
+	m := policy.NewManager()
+	p := policy.Default()
+	p.Mode = masking.ModeMask
+	p.RestoreAllowed = false
+	m.SetPolicy("mask-mode", p)
+	svc := newTestService(det, m)
+
+	mask, err := svc.Process(context.Background(), text, "id-1", "mask-mode")
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if mask != "email ***" {
+		t.Fatalf("expected fixed mask, got %q", mask)
+	}
+}
+
+func TestDetectorErrorPropagates(t *testing.T) {
+	det := &fakeDetector{err: errors.New("model unavailable")}
+	svc := newTestService(det, defaultPolicyManager())
+	_, err := svc.Process(context.Background(), "text", "id-1", "default")
+	if err == nil {
+		t.Fatal("expected error when detector fails")
+	}
+}
+
+func TestMissingPayloadID(t *testing.T) {
+	svc := newTestService(&fakeDetector{}, defaultPolicyManager())
+	_, err := svc.Process(context.Background(), "text", "", "default")
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid, got %v", err)
+	}
+}

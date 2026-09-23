@@ -1,0 +1,28 @@
+{
+  "listen_addr": ":8080",
+  "aes_key": "",
+  "store_ttl": "24h",
+  "store_max_size": 1000000,
+  "max_rps": 0,
+  "allowlist": ["default", "crm", "mobile"],
+  "consumers": {
+    "default": {
+      "enabled": true,
+      "types": [],
+      "restore_allowed": true,
+      "mode": "token"
+    },
+    "crm": {
+      "enabled": true,
+      "types": ["email", "phone", "full_name"],
+      "restore_allowed": true,
+      "mode": "token"
+    },
+    "mobile": {
+      "enabled": true,
+      "types": [],
+      "restore_allowed": false,
+      "mode": "mask"
+    }
+  }
+}

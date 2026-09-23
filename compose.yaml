@@ -1,0 +1,44 @@
+name: alfagen
+
+services:
+  ner:
+    build:
+      context: .
+      dockerfile: ner/Dockerfile
+    environment:
+      NER_HOST: 0.0.0.0
+      NER_PORT: "8090"
+    expose:
+      - "8090"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2).read()"
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      ner:
+        condition: service_healthy
+    environment:
+      PII_LISTEN_ADDR: ":8080"
+      PII_NER_ENDPOINT: http://ner:8090
+      PII_AES_KEY: ${PII_AES_KEY:-}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 12
+    restart: unless-stopped
