@@ -2,7 +2,10 @@ package ner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"sync"
@@ -175,6 +178,95 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestWorkerCountControlsConcurrentBatches проверяет, что число воркеров
+// microbatcher реально задаёт максимальное число одновременно выполняющихся
+// /ner/batch HTTP-запросов: с Workers=N sidecar может видеть до N запросов
+// in flight. Использует httptest-сервер, который блокирует обработку, чтобы
+// накопить параллельные запросы.
+func TestWorkerCountControlsConcurrentBatches(t *testing.T) {
+	const workers = 6
+
+	var mu sync.Mutex
+	inflight := 0
+	maxInflight := 0
+	release := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inflight++
+		if inflight > maxInflight {
+			maxInflight = inflight
+		}
+		mu.Unlock()
+
+		<-release // блокируем, чтобы запросы накапливались параллельно
+
+		mu.Lock()
+		inflight--
+		mu.Unlock()
+
+		// Возвращаем столько результатов, сколько текстов в batch.
+		var req struct {
+			Texts []string `json:"texts"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		results := make([]map[string]any, len(req.Texts))
+		for i := range results {
+			results[i] = map[string]any{"spans": []any{}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}))
+	defer server.Close()
+
+	c := NewClientWithOptions(server.URL, Options{
+		MaxBatch:  16,
+		MaxWait:   2 * time.Millisecond,
+		QueueSize: 256,
+		Workers:   workers,
+	})
+	defer c.Close()
+
+	// Отправляем достаточно запросов, чтобы сформировалось >= workers batch
+	// (каждый batch до maxBatch текстов). Тогда все воркеры должны быть заняты
+	// одновременно.
+	const n = workers * 16
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := c.Detect(ctx, "клиент Иван Петров "+itoa(i)); err != nil {
+				t.Errorf("Detect error: %v", err)
+			}
+		}(i)
+	}
+
+	// Ждём, пока все воркеры займут свои слоты (каждый держит один batch).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		cur := inflight
+		mu.Unlock()
+		if cur >= workers {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(release)
+	wg.Wait()
+
+	mu.Lock()
+	got := maxInflight
+	mu.Unlock()
+
+	if got < workers {
+		t.Fatalf("expected at least %d concurrent /ner/batch requests, got %d", workers, got)
+	}
 }
 
 func TestClientDiagnosticStatsAreBounded(t *testing.T) {
