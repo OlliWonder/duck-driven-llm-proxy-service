@@ -272,6 +272,11 @@ func (c *Client) Close() {
 // Запрос ставится в очередь microbatcher; результат возвращается после
 // обработки batch. Учитывается отмена контекста.
 func (c *Client) Detect(ctx context.Context, text string) ([]Candidate, error) {
+	// Пустые и whitespace-only тексты не отправляем в sidecar: модель не
+	// обрабатывает их, а ПДН в них нет. Возвращаем пустой результат.
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
 	item := &batchItem{text: text, ctx: ctx, ch: make(chan batchResult, 1), enqueuedAt: time.Now()}
 	select {
 	case c.queue <- item:

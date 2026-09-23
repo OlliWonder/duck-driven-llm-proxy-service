@@ -10,6 +10,7 @@ RUN CGO_ENABLED=0 go build -o /bin/server ./cmd/server
 FROM alpine:3.20
 RUN adduser -D -u 10001 app
 COPY --from=build /bin/server /usr/local/bin/server
+COPY --chmod=0555 deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER app
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/server"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -24,6 +24,33 @@ func TestRequiredNERFailureIsNotEmptySuccess(t *testing.T) {
 	}
 }
 
+// TestDetectEmptyWhitespace проверяет, что пустые и whitespace-only тексты
+// возвращают пустой результат без обращения к sidecar (модель их не
+// обрабатывает, а ПДН в них нет).
+func TestDetectEmptyWhitespace(t *testing.T) {
+	// Сервер, который падает, если его вызвали: пустые тексты не должны
+	// доходить до sidecar.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("sidecar should not be called for empty/whitespace text")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	defer client.Close()
+
+	inputs := []string{"", " ", "   ", "\t", "\n", "  \t  "}
+	for _, in := range inputs {
+		cands, err := client.Detect(context.Background(), in)
+		if err != nil {
+			t.Fatalf("Detect(%q) error: %v", in, err)
+		}
+		if len(cands) != 0 {
+			t.Fatalf("Detect(%q) expected 0 candidates, got %d", in, len(cands))
+		}
+	}
+}
+
 func TestClientNormalizesEndpointTrailingSlash(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ner/batch" {

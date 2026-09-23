@@ -176,7 +176,10 @@ func scanAddressValue(text string, start int) (int, bool) {
 		if c == '\n' || c == '\r' || c == ';' {
 			break
 		}
-		if c == ',' && nextPIIField(text, i+1) {
+		if c == '.' && !isAddressAbbreviationDot(text, i) {
+			break
+		}
+		if c == ',' && (nextPIIField(text, i+1) || nextLabeledField(text, i+1)) {
 			break
 		}
 		i++
@@ -188,6 +191,54 @@ func scanAddressValue(text string, start int) (int, bool) {
 		return 0, false
 	}
 	return i, true
+}
+
+var addressAbbreviations = map[string]bool{
+	"г": true, "ул": true, "д": true, "кв": true, "корп": true,
+	"стр": true, "обл": true, "р-н": true, "пр": true, "пр-т": true,
+	"пер": true, "ш": true, "наб": true, "пл": true, "пос": true,
+	"с": true, "респ": true,
+}
+
+func isAddressAbbreviationDot(text string, dot int) bool {
+	start := dot
+	for start > 0 {
+		c := text[start-1]
+		if c == ' ' || c == '\t' || c == ',' || c == ':' || c == ';' {
+			break
+		}
+		start--
+	}
+	return addressAbbreviations[strings.ToLower(text[start:dot])]
+}
+
+// nextLabeledField распознаёт начало следующего подписанного поля после
+// запятой (например, "статус заявки: ..."), не перечисляя служебные слова.
+func nextLabeledField(text string, start int) bool {
+	for start < len(text) && (text[start] == ' ' || text[start] == '\t') {
+		start++
+	}
+	limit := start + 96
+	if limit > len(text) {
+		limit = len(text)
+	}
+	seenLetter := false
+	for i := start; i < limit; {
+		if text[i] == ':' {
+			return seenLetter
+		}
+		if text[i] == ',' || text[i] == ';' || text[i] == '.' || text[i] == '\n' || text[i] == '\r' {
+			return false
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if unicode.IsLetter(r) {
+			seenLetter = true
+		} else if r != ' ' && r != '\t' && r != '-' {
+			return false
+		}
+		i += size
+	}
+	return false
 }
 
 func nextPIIField(text string, start int) bool {

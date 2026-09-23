@@ -20,6 +20,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,18 +38,20 @@ type Record struct {
 
 // Store — потокобезопасное in-memory хранилище соответствий.
 type Store struct {
-	mu       sync.Mutex
-	entries  map[string]*entry
-	key      []byte
-	ttl      time.Duration
-	maxSize  int
-	now      func() time.Time
-	evictCb  func(id string)
+	mu      sync.Mutex
+	entries map[string]*entry
+	key     []byte
+	ttl     time.Duration
+	maxSize int
+	now     func() time.Time
+	evictCb func(id string)
+	seq     atomic.Uint64
 }
 
 type entry struct {
-	rec      Record
-	lock     sync.Mutex // сериализация по id
+	rec         Record
+	lock        sync.Mutex // сериализация по id
+	lastUsedSeq atomic.Uint64
 }
 
 // New создаёт хранилище с заданным ключом AES (32 байта для AES-256),
@@ -91,10 +94,15 @@ func (s *Store) Get(id string) (Record, error) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 	if s.expired(e) {
-		s.removeLocked(id)
+		s.mu.Lock()
+		if s.entries[id] == e {
+			s.removeLocked(id)
+		}
+		s.mu.Unlock()
 		return Record{}, ErrNotFound
 	}
 	e.rec.LastUsed = s.now()
+	e.lastUsedSeq.Store(s.seq.Add(1))
 	return e.rec, nil
 }
 
@@ -104,6 +112,7 @@ func (s *Store) Put(id string, rec Record) {
 	e, ok := s.entries[id]
 	if !ok {
 		e = &entry{}
+		e.lastUsedSeq.Store(s.seq.Add(1))
 		s.entries[id] = e
 	}
 	s.mu.Unlock()
@@ -112,6 +121,7 @@ func (s *Store) Put(id string, rec Record) {
 	defer e.lock.Unlock()
 	e.rec = rec
 	e.rec.LastUsed = s.now()
+	e.lastUsedSeq.Store(s.seq.Add(1))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,11 +162,12 @@ func (s *Store) evictIfNeededLocked() {
 		return
 	}
 	var oldestID string
-	var oldest time.Time
+	var oldestSeq uint64
 	for id, e := range s.entries {
-		if oldestID == "" || e.rec.LastUsed.Before(oldest) {
+		seq := e.lastUsedSeq.Load()
+		if oldestID == "" || seq < oldestSeq {
 			oldestID = id
-			oldest = e.rec.LastUsed
+			oldestSeq = seq
 		}
 	}
 	if oldestID != "" {

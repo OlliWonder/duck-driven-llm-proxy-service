@@ -1,15 +1,17 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/duck-driven-llm-proxy-service/internal/detection"
-	"github.com/duck-driven-llm-proxy-service/internal/metrics"
 	"github.com/duck-driven-llm-proxy-service/internal/masking"
+	"github.com/duck-driven-llm-proxy-service/internal/metrics"
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 	"github.com/duck-driven-llm-proxy-service/internal/policy"
 	"github.com/duck-driven-llm-proxy-service/internal/store"
@@ -26,7 +28,7 @@ func (f *fakeDetector) Detect(_ context.Context, _ string) ([]detection.Fragment
 }
 
 func newTestService(det detection.Detector, pol *policy.Manager) *Service {
-	key := []byte("0123456789abcdef0123456789abcdef")
+	key := bytes.Repeat([]byte{0x42}, 32)
 	st, _ := store.New(key, time.Hour, 1000)
 	return NewService(det, st, pol, metrics.New())
 }
@@ -225,11 +227,10 @@ func TestPolicyRestoreForbidden(t *testing.T) {
 }
 
 func TestConsumerIsolation(t *testing.T) {
-	// Потребитель A маскирует; потребитель B не должен иметь возможности восстановить данные A.
+	// Потребитель A маскирует; потребитель B с тем же payload_id не должен
+	// иметь возможности восстановить данные A.
 	text := "email test@mail.ru"
-	det := &fakeDetector{frags: []detection.Fragment{
-		{Type: pii.TypeEmail, Start: 6, End: 18},
-	}}
+	det := tempdetect.New()
 	svc := newTestService(det, defaultPolicyManager())
 
 	mask, err := svc.Process(context.Background(), text, "id-iso", "consumer-a")
@@ -237,15 +238,16 @@ func TestConsumerIsolation(t *testing.T) {
 		t.Fatalf("mask: %v", err)
 	}
 	// Потребитель B пытается восстановить, используя тот же payload_id.
-	_, err = svc.Process(context.Background(), mask, "id-iso", "consumer-b")
+	got, err := svc.Process(context.Background(), mask, "id-iso", "consumer-b")
 	if err != nil {
-		t.Fatalf("consumer-b restore should not error at service level: %v", err)
+		t.Fatalf("consumer-b request failed: %v", err)
 	}
-	// ПРИМЕЧАНИЕ: payload_id — ключ корреляции; изоляция обеспечивается
-	// allowlist на уровне обработчика. Здесь оба потребителя разделяют
-	// хранилище, поэтому восстановление успешно. Межпотребительская изоляция
-	// обеспечивается пространством имён payload_id в производственной конфигурации.
-	_ = err
+	if got == text {
+		t.Fatal("consumer-b restored consumer-a personal data")
+	}
+	if strings.Contains(got, "test@mail.ru") {
+		t.Fatalf("consumer-b result contains consumer-a personal data: %q", got)
+	}
 }
 
 func TestPolicyTypeFiltering(t *testing.T) {

@@ -45,6 +45,11 @@ func TestValidatePER(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "clients favorite writer is not client PII",
+			in:   "любимый писатель клиента Лев Толстой",
+			want: nil,
+		},
+		{
 			name: "president not PII",
 			in:   "президент Владимир Путин выступил",
 			want: nil,

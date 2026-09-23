@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -15,6 +16,10 @@ const ConsumerHeader = "X-Consumer"
 
 // DefaultConsumer используется, когда заголовок потребителя отсутствует.
 const DefaultConsumer = "default"
+
+// maxProcessBodyBytes ограничивает память на один запрос, сохраняя большой
+// запас для long-text detection (включая проверенные тексты на 100 000 токенов).
+const maxProcessBodyBytes int64 = 8 << 20
 
 // ProcessRequest — тело запроса по контракту.
 type ProcessRequest struct {
@@ -57,9 +62,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxProcessBodyBytes)
+	decoder := json.NewDecoder(r.Body)
 	var req ProcessRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decoder.Decode(&req); err != nil {
 		h.metrics.IncErrors()
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "слишком большой запрос")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "некорректный json")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		h.metrics.IncErrors()
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "слишком большой запрос")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "некорректный json")
 		return
 	}

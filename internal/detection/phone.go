@@ -31,7 +31,9 @@ func (d *PhoneDetector) Detect(_ context.Context, text string) ([]Fragment, erro
 		if text[i] == '+' {
 			if i+1 < len(text) && text[i+1] == '7' {
 				if end, ok := scanPhone(text, i); ok {
-					frags = append(frags, Fragment{Type: pii.TypePhone, Start: i, End: end})
+					if !isNonPersonalPhoneContext(text, i) {
+						frags = append(frags, Fragment{Type: pii.TypePhone, Start: i, End: end})
+					}
 					i = end
 					continue
 				}
@@ -41,14 +43,18 @@ func (d *PhoneDetector) Detect(_ context.Context, text string) ([]Fragment, erro
 		}
 		if text[i] == '8' {
 			if end, ok := scanPhone(text, i); ok {
-				frags = append(frags, Fragment{Type: pii.TypePhone, Start: i, End: end})
+				if !isNonPersonalPhoneContext(text, i) {
+					frags = append(frags, Fragment{Type: pii.TypePhone, Start: i, End: end})
+				}
 				i = end
 				continue
 			}
 		}
 		if text[i] == '9' && hasPhoneContext(text, i) {
 			if end, ok := scanTenDigitPhone(text, i); ok {
-				frags = append(frags, Fragment{Type: pii.TypePhone, Start: i, End: end})
+				if !isNonPersonalPhoneContext(text, i) {
+					frags = append(frags, Fragment{Type: pii.TypePhone, Start: i, End: end})
+				}
 				i = end
 				continue
 			}

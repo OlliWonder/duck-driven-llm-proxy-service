@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 )
 
 func newTestHandler() *Handler {
-	key := []byte("0123456789abcdef0123456789abcdef")
+	key := bytes.Repeat([]byte{0x42}, 32)
 	st, _ := store.New(key, time.Hour, 1000)
 	pol := policy.NewManager()
 	pol.SetPolicy("default", policy.Default())
@@ -80,6 +81,33 @@ func TestHandlerInvalidJSON(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandlerRejectsMultipleJSONValues(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodPost, "/process", strings.NewReader(
+		`{"payload":"x","payload_id":"one"}{"payload":"y","payload_id":"two"}`,
+	))
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandlerRejectsOversizedBody(t *testing.T) {
+	h := newTestHandler()
+	body := `{"payload":"` + strings.Repeat("a", int(maxProcessBodyBytes)) + `","payload_id":"large"}`
+	req := httptest.NewRequest(http.MethodPost, "/process", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
 	}
 }
 

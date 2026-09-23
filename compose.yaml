@@ -32,7 +32,7 @@ services:
     environment:
       PII_LISTEN_ADDR: ":8080"
       PII_NER_ENDPOINT: http://ner:8090
-      PII_AES_KEY: ${PII_AES_KEY:-cddcb19f5d1d56d44d13360936fcf7d98919068ecfdb8e2472c38f44e6143b27}
+      PII_AES_KEY: ${PII_AES_KEY:-}
     ports:
       - "8080:8080"
     healthcheck:

@@ -26,7 +26,7 @@ func (d *EmailDetector) Detect(_ context.Context, text string) ([]Fragment, erro
 	}
 	frags := make([]Fragment, 0, len(locs))
 	for _, loc := range locs {
-		if validEmailCandidate(text, loc[0], loc[1]) {
+		if validEmailCandidate(text, loc[0], loc[1]) && !isNonPersonalEmailContext(text, loc[0]) {
 			frags = append(frags, Fragment{Type: pii.TypeEmail, Start: loc[0], End: loc[1]})
 		}
 	}

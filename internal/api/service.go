@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 
@@ -51,15 +52,17 @@ func (s *Service) Process(ctx context.Context, payload, payloadID, consumer stri
 		return "", fmt.Errorf("%w: consumer %q is not allowed", ErrForbidden, consumer)
 	}
 	p := s.policy.For(consumer)
+	storageID := scopedPayloadID(consumer, payloadID)
 
-	// Сериализуем все операции для одного payload_id.
-	s.locks.Lock(payloadID)
-	defer s.locks.Unlock(payloadID)
+	// Изолируем одинаковые payload_id разных потребителей и сериализуем
+	// операции только внутри одного consumer namespace.
+	s.locks.Lock(storageID)
+	defer s.locks.Unlock(storageID)
 
-	rec, err := s.store.Get(payloadID)
+	rec, err := s.store.Get(storageID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return s.doMask(ctx, payload, payloadID, p)
+		return s.doMask(ctx, payload, storageID, p)
 	case err != nil:
 		return "", err
 	}
@@ -107,8 +110,13 @@ func (s *Service) Process(ctx context.Context, payload, payloadID, consumer stri
 		}
 		// Токенов нет и текст не совпадает ни с оригиналом, ни с маской →
 		// считаем новой операцией маскирования (перезапись).
-		return s.doMask(ctx, payload, payloadID, p)
+		return s.doMask(ctx, payload, storageID, p)
 	}
+}
+
+func scopedPayloadID(consumer, payloadID string) string {
+	sum := sha256.Sum256([]byte(consumer + "\x00" + payloadID))
+	return string(sum[:])
 }
 
 func (s *Service) doMask(ctx context.Context, payload, payloadID string, p policy.Policy) (string, error) {

@@ -64,6 +64,9 @@ func (v *Validator) decide(text string, c Candidate) (pii.Type, bool) {
 
 	before := strings.ToLower(text[partStart:c.Start])
 	after := strings.ToLower(text[c.End:partEnd])
+	if c.Label == LabelPER && containsPublicRole(before) {
+		return "", false
+	}
 
 	// Ближайшая подпись слева и справа от кандидата.
 	leftSig, leftDist, leftOK := nearestBefore(before, sigs)

@@ -91,10 +91,10 @@ func (d *Detector) Detect(ctx context.Context, text string) ([]detection.Fragmen
 			return nil, err
 		}
 		vStart := time.Now()
-	frags := d.validator.Validate(text, cands)
-	d.statsMu.Lock()
-	d.validatorDurs = appendStat(d.validatorDurs, time.Since(vStart))
-	d.statsMu.Unlock()
+		frags := d.validator.Validate(text, cands)
+		d.statsMu.Lock()
+		d.validatorDurs = appendStat(d.validatorDurs, time.Since(vStart))
+		d.statsMu.Unlock()
 		return frags, nil
 	})
 }

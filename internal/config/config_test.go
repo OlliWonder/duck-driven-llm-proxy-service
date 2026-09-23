@@ -16,7 +16,7 @@ func TestLoadAndBuildPolicies(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	cfgJSON := `{
 	  "listen_addr": ":9090",
-	  "aes_key": "cddcb19f5d1d56d44d13360936fcf7d98919068ecfdb8e2472c38f44e6143b27",
+	  "aes_key": "",
 	  "store_ttl": "1h",
 	  "store_max_size": 100,
 	  "ner_endpoint": "http://127.0.0.1:18090",

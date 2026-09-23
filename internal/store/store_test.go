@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"sync"
 	"testing"
@@ -8,7 +9,7 @@ import (
 )
 
 func testKey() []byte {
-	return []byte("0123456789abcdef0123456789abcdef")
+	return bytes.Repeat([]byte{0x42}, 32)
 }
 
 func TestPutGet(t *testing.T) {

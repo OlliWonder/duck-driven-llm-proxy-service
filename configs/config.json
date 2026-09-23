@@ -1,6 +1,6 @@
 {
   "listen_addr": ":8080",
-  "aes_key": "cddcb19f5d1d56d44d13360936fcf7d98919068ecfdb8e2472c38f44e6143b27",
+  "aes_key": "",
   "store_ttl": "24h",
   "store_max_size": 1000000,
   "max_rps": 0,

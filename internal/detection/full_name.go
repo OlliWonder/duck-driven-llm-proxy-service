@@ -33,7 +33,7 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 		if labelEnd < 0 {
 			break
 		}
-		valStart := skipSeparators(text, labelEnd)
+		valStart := fullNameValueStart(text, labelEnd)
 		// "имя держателя" belongs to the more specific card-holder detector.
 		if strings.HasPrefix(lowerText[valStart:], "держателя") {
 			from = labelEnd + 1
@@ -54,4 +54,39 @@ func (d *FullNameDetector) Detect(_ context.Context, text string) ([]Fragment, e
 // Подписанное поле ФИО распознаётся независимо от регистра значения.
 func scanFullName(text string, start int) (int, bool) {
 	return scanNameWords(text, start, 1, 4)
+}
+
+// fullNameValueStart поддерживает квалифицированные подписи вида
+// "ФИО заявителя: ..." без включения описания владельца поля в значение.
+// Правило основано на структуре подписанного поля, а не на списке ролей.
+func fullNameValueStart(text string, labelEnd int) int {
+	valueStart := skipSeparators(text, labelEnd)
+	if hasNameFieldDelimiter(text[labelEnd:valueStart]) {
+		return valueStart
+	}
+
+	limit := valueStart + 96
+	if limit > len(text) {
+		limit = len(text)
+	}
+	for i := valueStart; i < limit; i++ {
+		switch text[i] {
+		case ':', '=':
+			return skipSeparators(text, i+1)
+		case ',', ';', '.', '\n', '\r':
+			return valueStart
+		case '-':
+			if i > valueStart && text[i-1] == ' ' && i+1 < len(text) && text[i+1] == ' ' {
+				return skipSeparators(text, i+1)
+			}
+		}
+		if strings.HasPrefix(text[i:], "—") || strings.HasPrefix(text[i:], "–") {
+			return skipSeparators(text, i+len("—"))
+		}
+	}
+	return valueStart
+}
+
+func hasNameFieldDelimiter(text string) bool {
+	return strings.ContainsAny(text, ":=-") || strings.Contains(text, "—") || strings.Contains(text, "–")
 }
