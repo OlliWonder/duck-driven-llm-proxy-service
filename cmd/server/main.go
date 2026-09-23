@@ -20,8 +20,8 @@ import (
 	"github.com/duck-driven-llm-proxy-service/internal/config"
 	"github.com/duck-driven-llm-proxy-service/internal/detection"
 	"github.com/duck-driven-llm-proxy-service/internal/metrics"
+	"github.com/duck-driven-llm-proxy-service/internal/ner"
 	"github.com/duck-driven-llm-proxy-service/internal/store"
-	"github.com/duck-driven-llm-proxy-service/internal/tempdetect"
 )
 
 func main() {
@@ -56,8 +56,10 @@ func main() {
 
 	m := metrics.New()
 
-	// ВРЕМЕННЫЙ детектор; замените на реальный детектор участника 2.
-	var det detection.Detector = tempdetect.New()
+	nerClient := ner.NewClient(cfg.NEREndpoint)
+	defer nerClient.Close()
+
+	var det detection.Detector = ner.NewProductionDetector(nerClient)
 
 	svc := api.NewService(det, st, pol, m)
 	handler := api.NewHandler(svc, m, log, rateLimiter(cfg.MaxRPS))

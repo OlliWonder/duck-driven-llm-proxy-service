@@ -27,3 +27,7 @@ coverage/
 # Local config with secrets
 config.local.json
 *.local.json
+
+# NER sidecar (model archives are versioned for reproducible container builds)
+ner/*.log
+ner/__pycache__/

@@ -26,6 +26,8 @@ type Config struct {
 	StoreMaxSize int `json:"store_max_size"`
 	// MaxRPS ограничивает скорость запросов; 0 отключает ограничение.
 	MaxRPS int `json:"max_rps"`
+	// NEREndpoint — адрес локального NER sidecar.
+	NEREndpoint string `json:"ner_endpoint"`
 	// Allowlist — набор потребителей, которым разрешено обращаться к модулю.
 	Allowlist []string `json:"allowlist"`
 	// Consumers сопоставляет идентификатор потребителя с его политикой.
@@ -63,12 +65,13 @@ type ConsumerConfig struct {
 // Default возвращает разумную конфигурацию по умолчанию.
 func Default() Config {
 	return Config{
-		ListenAddr:    ":8080",
-		StoreTTL:      Duration(24 * time.Hour),
-		StoreMaxSize:  1_000_000,
-		MaxRPS:        0,
-		Allowlist:     nil,
-		Consumers:     map[string]ConsumerConfig{},
+		ListenAddr:   ":8080",
+		StoreTTL:     Duration(24 * time.Hour),
+		StoreMaxSize: 1_000_000,
+		MaxRPS:       0,
+		NEREndpoint:  "http://127.0.0.1:8090",
+		Allowlist:    nil,
+		Consumers:    map[string]ConsumerConfig{},
 	}
 }
 
@@ -111,6 +114,9 @@ func Load(path string) (Config, error) {
 			return cfg, err
 		}
 		cfg.MaxRPS = n
+	}
+	if v := os.Getenv("PII_NER_ENDPOINT"); v != "" {
+		cfg.NEREndpoint = v
 	}
 	return cfg, nil
 }

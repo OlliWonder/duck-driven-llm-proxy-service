@@ -12,6 +12,7 @@ package detection
 
 import (
 	"context"
+	"sort"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
 )
@@ -46,8 +47,34 @@ func NewComposite(detectors ...Detector) *Composite {
 	return &Composite{detectors: detectors}
 }
 
-// Detect запускает все детекторы и объединяет результаты, разрешая
-// пересечения в пользу первого детектора, сообщившего об участке.
+// NewRuleBasedDetector создаёт полный правиловый детектор. Единый реестр
+// позволяет добавить простой тип одной строкой и даёт сервису стабильный
+// конструктор для интеграции.
+func NewRuleBasedDetector() Detector {
+	return NewComposite(
+		NewCardHolderDetector(), // more specific than a generic name field
+		NewFullNameDetector(),
+		NewBirthDateDetector(),
+		NewBirthPlaceDetector(),
+		NewPassportDetector(),
+		NewCitizenshipDetector(),
+		NewPassportIssuerDetector(),
+		NewPassportDeptCodeDetector(),
+		NewPassportIssueDateDetector(),
+		NewDrivingLicenseDetector(),
+		NewAddressDetector(),
+		NewEmailDetector(),
+		NewPhoneDetector(),
+		NewINNDetector(),
+		NewCVVDetector(),
+		NewPINDetector(),
+		NewCardNumberDetector(),
+	)
+}
+
+// Detect запускает все детекторы и объединяет результаты. Более длинный span
+// побеждает при пересечении; для одинаковых span сохраняется порядок
+// детекторов в Composite.
 func (c *Composite) Detect(ctx context.Context, text string) ([]Fragment, error) {
 	var all []Fragment
 	for _, d := range c.detectors {
@@ -68,33 +95,29 @@ func Merge(fragments []Fragment) []Fragment {
 	if len(fragments) == 0 {
 		return nil
 	}
-	// Сортировка по start по возрастанию, затем по end по убыванию (длиннее первым).
-	sortFragments(fragments)
-
-	out := make([]Fragment, 0, len(fragments))
-	for _, f := range fragments {
-		if len(out) == 0 {
-			out = append(out, f)
-			continue
+	// Сначала выбираем более длинные span. SliceStable сохраняет приоритет
+	// детекторов при равных span (например, card_holder перед full_name).
+	sort.SliceStable(fragments, func(i, j int) bool {
+		leftLen := fragments[i].End - fragments[i].Start
+		rightLen := fragments[j].End - fragments[j].Start
+		if leftLen != rightLen {
+			return leftLen > rightLen
 		}
-		last := &out[len(out)-1]
-		if f.Start < last.End {
-			// Пересечение: оставляем уже находящийся в out более длинный участок.
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
-}
-
-func sortFragments(fs []Fragment) {
-	for i := 1; i < len(fs); i++ {
-		for j := i; j > 0; j-- {
-			a, b := fs[j-1], fs[j]
-			if a.Start < b.Start || (a.Start == b.Start && a.End > b.End) {
+		return fragments[i].Start < fragments[j].Start
+	})
+	selected := make([]Fragment, 0, len(fragments))
+	for _, candidate := range fragments {
+		overlaps := false
+		for _, existing := range selected {
+			if candidate.Start < existing.End && existing.Start < candidate.End {
+				overlaps = true
 				break
 			}
-			fs[j-1], fs[j] = b, a
+		}
+		if !overlaps {
+			selected = append(selected, candidate)
 		}
 	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].Start < selected[j].Start })
+	return selected
 }

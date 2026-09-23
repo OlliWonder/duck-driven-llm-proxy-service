@@ -53,3 +53,28 @@ func TestMergeEmpty(t *testing.T) {
 		t.Fatalf("expected nil, got %+v", out)
 	}
 }
+
+func TestMergeOverlapKeepsLongerRegardlessOfStart(t *testing.T) {
+	in := []Fragment{
+		{Type: pii.TypePhone, Start: 0, End: 5},
+		{Type: pii.TypeCardNumber, Start: 2, End: 10},
+	}
+	out := Merge(in)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 merged fragment, got %d", len(out))
+	}
+	if out[0].Type != pii.TypeCardNumber || out[0].Start != 2 || out[0].End != 10 {
+		t.Fatalf("expected longer card span, got %+v", out[0])
+	}
+}
+
+func TestMergeEqualOverlapKeepsDetectorPriority(t *testing.T) {
+	in := []Fragment{
+		{Type: pii.TypeCardHolder, Start: 5, End: 15},
+		{Type: pii.TypeFullName, Start: 5, End: 15},
+	}
+	out := Merge(in)
+	if len(out) != 1 || out[0].Type != pii.TypeCardHolder {
+		t.Fatalf("expected first detector to win equal span, got %+v", out)
+	}
+}

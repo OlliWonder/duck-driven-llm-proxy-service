@@ -11,6 +11,7 @@ import (
 )
 
 func TestLoadAndBuildPolicies(t *testing.T) {
+	t.Setenv("PII_NER_ENDPOINT", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	cfgJSON := `{
@@ -18,6 +19,7 @@ func TestLoadAndBuildPolicies(t *testing.T) {
 	  "aes_key": "cddcb19f5d1d56d44d13360936fcf7d98919068ecfdb8e2472c38f44e6143b27",
 	  "store_ttl": "1h",
 	  "store_max_size": 100,
+	  "ner_endpoint": "http://127.0.0.1:18090",
 	  "allowlist": ["a", "b"],
 	  "consumers": {
 	    "a": {"enabled": true, "types": ["email"], "restore_allowed": true, "mode": "token"},
@@ -37,6 +39,9 @@ func TestLoadAndBuildPolicies(t *testing.T) {
 	}
 	if cfg.StoreTTL.D() != time.Hour {
 		t.Fatalf("ttl: %v", cfg.StoreTTL.D())
+	}
+	if cfg.NEREndpoint != "http://127.0.0.1:18090" {
+		t.Fatalf("NER endpoint: %q", cfg.NEREndpoint)
 	}
 
 	m, err := cfg.BuildPolicyManager()
@@ -61,6 +66,20 @@ func TestLoadAndBuildPolicies(t *testing.T) {
 	pb := m.For("b")
 	if pb.Mode != masking.ModeMask || pb.RestoreAllowed {
 		t.Fatalf("policy b: %+v", pb)
+	}
+}
+
+func TestNEREndpointDefaultAndEnvironmentOverride(t *testing.T) {
+	if got := Default().NEREndpoint; got != "http://127.0.0.1:8090" {
+		t.Fatalf("default NER endpoint: %q", got)
+	}
+	t.Setenv("PII_NER_ENDPOINT", "http://ner-sidecar:8090")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NEREndpoint != "http://ner-sidecar:8090" {
+		t.Fatalf("environment NER endpoint: %q", cfg.NEREndpoint)
 	}
 }
 
