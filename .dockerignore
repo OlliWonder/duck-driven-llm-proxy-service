@@ -1,0 +1,16 @@
+.git
+.idea
+.vscode
+.venv
+venv
+env
+bin
+build
+dist
+out
+*.exe
+*.test
+*.out
+*.log
+__pycache__
+coverage
