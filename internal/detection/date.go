@@ -244,6 +244,9 @@ func scanTextDate(text string, start int) (int, bool) {
 	for j < len(text) && text[j] == ' ' {
 		j++
 	}
+	if end, ok := scanRussianYearWords(lower, j); ok {
+		return end, true
+	}
 	// Ищем год (4 цифры).
 	if j+4 > len(text) || !isDigit(text[j]) || !isDigit(text[j+1]) || !isDigit(text[j+2]) || !isDigit(text[j+3]) {
 		return 0, false
@@ -263,6 +266,48 @@ func scanTextDate(text string, start int) (int, bool) {
 		return 0, false
 	}
 	return end, true
+}
+
+func scanRussianYearWords(lower string, start int) (int, bool) {
+	const prefix = "две тысячи "
+	if !strings.HasPrefix(lower[start:], prefix) {
+		return 0, false
+	}
+	yearStart := start + len(prefix)
+	for _, suffix := range russianYearSuffixes {
+		if !strings.HasPrefix(lower[yearStart:], suffix) {
+			continue
+		}
+		end := yearStart + len(suffix)
+		if end < len(lower) && isWordByte(lower[end]) {
+			continue
+		}
+		for end < len(lower) && lower[end] == ' ' {
+			end++
+		}
+		if strings.HasPrefix(lower[end:], "года") {
+			end += len("года")
+		} else if strings.HasPrefix(lower[end:], "год") {
+			end += len("год")
+		}
+		if end < len(lower) && isWordByte(lower[end]) {
+			return 0, false
+		}
+		return end, true
+	}
+	return 0, false
+}
+
+var russianYearSuffixes = []string{
+	"первого", "второго", "третьего", "четвертого", "четвёртого",
+	"пятого", "шестого", "седьмого", "восьмого", "девятого",
+	"десятого", "одиннадцатого", "двенадцатого", "тринадцатого",
+	"четырнадцатого", "пятнадцатого", "шестнадцатого", "семнадцатого",
+	"восемнадцатого", "девятнадцатого", "двадцатого",
+	"двадцать первого", "двадцать второго", "двадцать третьего",
+	"двадцать четвертого", "двадцать четвёртого", "двадцать пятого",
+	"двадцать шестого", "двадцать седьмого", "двадцать восьмого",
+	"двадцать девятого", "тридцатого", "тридцать первого",
 }
 
 // scanNumericTextDate recognises dates such as "7 мая 1988 года".

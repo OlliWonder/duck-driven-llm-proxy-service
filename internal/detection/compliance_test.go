@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
@@ -15,6 +16,41 @@ type complianceCase struct {
 	in string
 	// want — ожидаемое число фрагментов (0 для негативного).
 	want int
+}
+
+func TestComplianceAllTypesIgnoreCase(t *testing.T) {
+	cases := []complianceCase{
+		{typ: pii.TypeFullName, in: "ФИО: Иванов Иван Иванович", want: 1},
+		{typ: pii.TypeBirthDate, in: "Дата рождения: 15.03.1990", want: 1},
+		{typ: pii.TypeBirthPlace, in: "Место рождения: Москва", want: 1},
+		{typ: pii.TypePassportSeries, in: "Паспорт: 4509 123456", want: 1},
+		{typ: pii.TypeCitizenship, in: "Гражданство: Российская Федерация", want: 1},
+		{typ: pii.TypePassportIssuer, in: "Кем выдан: ОУФМС России по г. Москве", want: 1},
+		{typ: pii.TypePassportDeptCode, in: "Код подразделения: 770-123", want: 1},
+		{typ: pii.TypePassportIssueDate, in: "Дата выдачи паспорта: 20.05.2015", want: 1},
+		{typ: pii.TypeDrivingLicense, in: "Водительское удостоверение: 7712 345678", want: 1},
+		{typ: pii.TypeAddress, in: "Адрес клиента: г. Москва, ул. Ленина, д. 10", want: 1},
+		{typ: pii.TypeEmail, in: "ПОЧТА IVAN@EXAMPLE.COM", want: 1},
+		{typ: pii.TypePhone, in: "ТЕЛЕФОН: +7 916 123-45-67", want: 1},
+		{typ: pii.TypeINN, in: "ИНН: 7707083893", want: 1},
+		{typ: pii.TypeCVV, in: "CVV: 123", want: 1},
+		{typ: pii.TypePIN, in: "ПИН-КОД: 1234", want: 1},
+		{typ: pii.TypeCardHolder, in: "ДЕРЖАТЕЛЬ КАРТЫ: IVAN PETROV", want: 1},
+		{typ: pii.TypeCardNumber, in: "КАРТА: 4111111111111111", want: 1},
+	}
+	for _, tc := range cases {
+		for _, variant := range []struct {
+			name string
+			text string
+		}{{"верхний регистр", strings.ToUpper(tc.in)}, {"нижний регистр", strings.ToLower(tc.in)}} {
+			t.Run(string(tc.typ)+"/"+variant.name, func(t *testing.T) {
+				got := detectType(context.Background(), variant.text, tc.typ)
+				if len(got) != tc.want {
+					t.Fatalf("%q: найдено %d фрагментов типа %s, ожидалось %d", variant.text, len(got), tc.typ, tc.want)
+				}
+			})
+		}
+	}
 }
 
 // allDetectors возвращает все 17 детекторов.

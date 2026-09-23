@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/duck-driven-llm-proxy-service/internal/pii"
@@ -80,6 +81,56 @@ func TestRegressionPublicBiographyWithLaterSameClientName(t *testing.T) {
 	for _, f := range frags {
 		if f.Type == pii.TypeBirthPlace && text[f.Start:f.End] == "Москва" {
 			t.Fatalf("public biographical birthplace should remain public: %+v", frags)
+		}
+	}
+}
+
+func TestRegressionInformalAndReversedFullNameContexts(t *testing.T) {
+	cases := []struct {
+		text string
+		name string
+	}{
+		{"Клиент сказал, что его зовут Александр Пушкин", "Александр Пушкин"},
+		{"Заявление поступило от Петрова Ивана Ивановича", "Петрова Ивана Ивановича"},
+	}
+	for _, tc := range cases {
+		frags, err := NewFullNameDetector().Detect(context.Background(), tc.text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, f := range frags {
+			if f.Type == pii.TypeFullName && tc.text[f.Start:f.End] == tc.name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("name %q was not found in %q: %+v", tc.name, tc.text, frags)
+		}
+	}
+}
+
+func TestRegressionSpelledOutBirthYear(t *testing.T) {
+	text := "Клиент родился третьего апреля две тысячи первого года"
+	frags, err := NewBirthDateDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frags) != 1 || text[frags[0].Start:frags[0].End] != "третьего апреля две тысячи первого года" {
+		t.Fatalf("textual date not detected: %+v", frags)
+	}
+}
+
+func TestRegressionOrganizationBranchAddressDoesNotMaskNameOnly(t *testing.T) {
+	text := "Клиент Иван Петров проживает по адресу отделения банка: г. Тольятти, ул. Юбилейная, д. 31Г"
+	frags, err := NewAddressDetector().Detect(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range frags {
+		value := text[f.Start:f.End]
+		if f.Type == pii.TypeAddress && strings.Contains(value, "Тольятти") {
+			t.Fatalf("organization branch address must remain public: %q", value)
 		}
 	}
 }
