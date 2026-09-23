@@ -56,7 +56,17 @@ func main() {
 
 	m := metrics.New()
 
-	nerClient := ner.NewClientWithWorkers(cfg.NEREndpoint, cfg.NERWorkers)
+	var nerClient *ner.Client
+	if len(cfg.NEREndpoints) > 0 {
+		nerClient = ner.NewClientWithEndpoints(cfg.NEREndpoints, ner.Options{
+			MaxBatch:  ner.DefaultMaxBatch,
+			MaxWait:   ner.DefaultMaxWait,
+			QueueSize: ner.DefaultQueueSize,
+			Workers:   cfg.NERWorkers,
+		})
+	} else {
+		nerClient = ner.NewClientWithWorkers(cfg.NEREndpoint, cfg.NERWorkers)
+	}
 	defer nerClient.Close()
 
 	var det detection.Detector = ner.NewProductionDetector(nerClient)

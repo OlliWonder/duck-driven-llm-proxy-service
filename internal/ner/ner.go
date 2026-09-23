@@ -84,8 +84,14 @@ type batchResult struct {
 }
 
 // Client — HTTP-клиент для NER sidecar с microbatcher.
+//
+// Поддерживает несколько независимых sidecar-процессов: каждый batch
+// распределяется между endpoints по round-robin. Если выбранный endpoint
+// недоступен, клиент пробует следующий (failover). Один endpoint — поведение
+// ровно как раньше (один sidecar).
 type Client struct {
-	baseURL   string
+	endpoints []string
+	rr        atomic.Uint64
 	http      *http.Client
 	transport *http.Transport
 
@@ -242,8 +248,30 @@ func NewClientWithWorkers(baseURL string, workers int) *Client {
 	return NewClientWithOptions(baseURL, Options{MaxBatch: DefaultMaxBatch, MaxWait: DefaultMaxWait, QueueSize: DefaultQueueSize, Workers: workers})
 }
 
+// NewClientWithEndpoints создаёт клиент, распределяющий batch между
+// несколькими sidecar-процессами по round-robin. Каждый endpoint — полный
+// адрес sidecar (например, "http://ner-1:8090"). Пустой список или один
+// endpoint эквивалентны одиночному sidecar.
+func NewClientWithEndpoints(endpoints []string, opts Options) *Client {
+	clean := make([]string, 0, len(endpoints))
+	for _, e := range endpoints {
+		e = strings.TrimRight(strings.TrimSpace(e), "/")
+		if e != "" {
+			clean = append(clean, e)
+		}
+	}
+	if len(clean) == 0 {
+		clean = []string{""}
+	}
+	return newClient(clean, opts)
+}
+
 // NewClientWithOptions создаёт клиент с заданными параметрами microbatcher.
 func NewClientWithOptions(baseURL string, opts Options) *Client {
+	return NewClientWithEndpoints([]string{baseURL}, opts)
+}
+
+func newClient(endpoints []string, opts Options) *Client {
 	if opts.MaxBatch <= 0 {
 		opts.MaxBatch = DefaultMaxBatch
 	} else if opts.MaxBatch > DefaultMaxBatch {
@@ -261,13 +289,13 @@ func NewClientWithOptions(baseURL string, opts Options) *Client {
 		opts.Workers = MaxWorkers
 	}
 	c := &Client{
-		baseURL:  strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		maxBatch: opts.MaxBatch,
-		maxWait:  opts.MaxWait,
-		queue:    make(chan *batchItem, opts.QueueSize),
-		batches:  make(chan []*batchItem, opts.Workers),
-		workers:  opts.Workers,
-		done:     make(chan struct{}),
+		endpoints: endpoints,
+		maxBatch:  opts.MaxBatch,
+		maxWait:   opts.MaxWait,
+		queue:     make(chan *batchItem, opts.QueueSize),
+		batches:   make(chan []*batchItem, opts.Workers),
+		workers:   opts.Workers,
+		done:      make(chan struct{}),
 	}
 	// Явный Transport с keep-alive (DisableKeepAlives=false) и подсчётом новых
 	// TCP-соединений. Один переиспользуемый http.Client на весь клиент.
@@ -452,12 +480,32 @@ type sidecarTiming struct {
 
 // sendBatch отправляет массив текстов в /ner/batch и возвращает кандидатов
 // для каждого текста в том же порядке, а также служебные timing-данные.
+//
+// Batch распределяется между endpoints по round-robin. Если выбранный endpoint
+// недоступен, пробуем следующий (failover); если все недоступны — возвращаем
+// ошибку последней попытки.
 func (c *Client) sendBatch(texts []string) ([][]Candidate, *sidecarTiming, error) {
 	body, err := json.Marshal(map[string][]string{"texts": texts})
 	if err != nil {
 		return nil, nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/ner/batch", bytes.NewReader(body))
+
+	start := c.rr.Add(1) - 1
+	var lastErr error
+	for i := range c.endpoints {
+		idx := int((start + uint64(i)) % uint64(len(c.endpoints)))
+		results, timing, err := c.sendBatchTo(c.endpoints[idx], texts, body)
+		if err == nil {
+			return results, timing, nil
+		}
+		lastErr = err
+	}
+	return nil, nil, lastErr
+}
+
+// sendBatchTo отправляет batch на конкретный endpoint и разбирает ответ.
+func (c *Client) sendBatchTo(endpoint string, texts []string, body []byte) ([][]Candidate, *sidecarTiming, error) {
+	req, err := http.NewRequest(http.MethodPost, endpoint+"/ner/batch", bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
 	}

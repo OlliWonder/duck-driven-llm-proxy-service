@@ -14,7 +14,37 @@ services:
     environment:
       NER_HOST: 0.0.0.0
       NER_PORT: "8090"
-      NER_WORKERS: "${NER_WORKERS:-7}"
+      NER_WORKERS: "${NER_WORKERS:-6}"
+      NER_LOG_BATCHES: "${NER_LOG_BATCHES:-0}"
+    expose:
+      - "8090"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2).read()"
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 12
+    restart: unless-stopped
+    logging: *bounded-logging
+
+  # Вторая независимая NER-реплика для режима 2xN (round-robin между
+  # ner и ner-2). Отключается, когда PII_NER_ENDPOINTS не ссылается на неё.
+  ner-2:
+    build:
+      context: .
+      dockerfile: ner/Dockerfile
+    environment:
+      NER_HOST: 0.0.0.0
+      NER_PORT: "8090"
+      NER_WORKERS: "${NER_WORKERS_2:-3}"
       NER_LOG_BATCHES: "${NER_LOG_BATCHES:-0}"
     expose:
       - "8090"
@@ -42,9 +72,14 @@ services:
     depends_on:
       ner:
         condition: service_healthy
+      ner-2:
+        condition: service_healthy
     environment:
       PII_LISTEN_ADDR: ":8080"
       PII_NER_ENDPOINT: "http://ner:8090"
+      # Если задан список, api распределяет batch между репликами round-robin.
+      # Пустое значение → одиночный sidecar (PII_NER_ENDPOINT).
+      PII_NER_ENDPOINTS: "${PII_NER_ENDPOINTS:-}"
       PII_NER_WORKERS: "${NER_WORKERS:-7}"
       PII_AES_KEY: "${PII_AES_KEY:-}"
     ports:

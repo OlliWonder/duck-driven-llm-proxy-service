@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/duck-driven-llm-proxy-service/internal/masking"
@@ -29,7 +30,10 @@ type Config struct {
 	MaxRPS int `json:"max_rps"`
 	// NEREndpoint — адрес локального NER sidecar.
 	NEREndpoint string `json:"ner_endpoint"`
-	NERWorkers  int    `json:"ner_workers"`
+	// NEREndpoints — список адресов NER sidecar для распределения batch по
+	// round-robin. Если задан, используется вместо NEREndpoint.
+	NEREndpoints []string `json:"ner_endpoints"`
+	NERWorkers   int      `json:"ner_workers"`
 	// Allowlist — набор потребителей, которым разрешено обращаться к модулю.
 	Allowlist []string `json:"allowlist"`
 	// Consumers сопоставляет идентификатор потребителя с его политикой.
@@ -121,6 +125,9 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("PII_NER_ENDPOINT"); v != "" {
 		cfg.NEREndpoint = v
 	}
+	if v := os.Getenv("PII_NER_ENDPOINTS"); v != "" {
+		cfg.NEREndpoints = splitCSV(v)
+	}
 	if v := os.Getenv("PII_NER_WORKERS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -132,6 +139,18 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("config: ner_workers must be between 1 and 32")
 	}
 	return cfg, nil
+}
+
+// splitCSV разбивает строку по запятым и обрезает пробелы.
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // BuildPolicyManager преобразует конфигурацию в policy.Manager.

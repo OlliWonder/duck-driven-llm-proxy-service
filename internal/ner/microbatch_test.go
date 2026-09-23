@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -269,6 +270,99 @@ func TestWorkerCountControlsConcurrentBatches(t *testing.T) {
 	}
 }
 
+// TestConcurrentBatchesAcrossEndpoints проверяет, что в режиме нескольких
+// endpoints (PII_NER_ENDPOINTS) несколько batch-запросов реально выполняются
+// одновременно и распределяются между разными sidecar: с Workers=N оба
+// endpoint одновременно держат in-flight batch-запросы.
+func TestConcurrentBatchesAcrossEndpoints(t *testing.T) {
+	const workers = 6
+
+	var mu sync.Mutex
+	inflight1, inflight2 := 0, 0
+	bothInflight := false
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+
+	mkHandler := func(inflight *int, release chan struct{}) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			*inflight++
+			if inflight1 > 0 && inflight2 > 0 {
+				bothInflight = true
+			}
+			mu.Unlock()
+
+			<-release
+
+			mu.Lock()
+			*inflight--
+			mu.Unlock()
+
+			var req struct {
+				Texts []string `json:"texts"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			results := make([]map[string]any, len(req.Texts))
+			for i := range results {
+				results[i] = map[string]any{"spans": []any{}}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+		}
+	}
+
+	s1 := httptest.NewServer(mkHandler(&inflight1, release1))
+	defer s1.Close()
+	s2 := httptest.NewServer(mkHandler(&inflight2, release2))
+	defer s2.Close()
+
+	c := NewClientWithEndpoints([]string{s1.URL, s2.URL}, Options{
+		MaxBatch:  16,
+		MaxWait:   2 * time.Millisecond,
+		QueueSize: 256,
+		Workers:   workers,
+	})
+	defer c.Close()
+
+	// Достаточно запросов, чтобы сформировалось >= workers batch.
+	const n = workers * 16
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := c.Detect(ctx, "клиент Иван Петров "+itoa(i)); err != nil {
+				t.Errorf("Detect error: %v", err)
+			}
+		}(i)
+	}
+
+	// Ждём, пока оба endpoint одновременно держат in-flight batch.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		both := bothInflight
+		mu.Unlock()
+		if both {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(release1)
+	close(release2)
+	wg.Wait()
+
+	mu.Lock()
+	got := bothInflight
+	mu.Unlock()
+
+	if !got {
+		t.Fatalf("expected both endpoints to hold in-flight batch requests simultaneously")
+	}
+}
+
 func TestClientDiagnosticStatsAreBounded(t *testing.T) {
 	c := &Client{}
 	for i := 0; i < maxStatsSamples*3; i++ {
@@ -293,5 +387,84 @@ func TestDetectAfterCloseReturnsError(t *testing.T) {
 	c.Close()
 	if _, err := c.Detect(context.Background(), "клиент Иван Петров"); !errors.Is(err, ErrClientClosed) {
 		t.Fatalf("expected ErrClientClosed, got %v", err)
+	}
+}
+
+// batchEchoHandler возвращает столько результатов, сколько текстов в batch.
+func batchEchoHandler(t *testing.T, hit *int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hit != nil {
+			atomic.AddInt32(hit, 1)
+		}
+		var req struct {
+			Texts []string `json:"texts"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		results := make([]map[string]any, len(req.Texts))
+		for i := range results {
+			results[i] = map[string]any{"spans": []any{}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}
+}
+
+// TestRoundRobinDistributesBatches проверяет, что batch-запросы распределяются
+// между несколькими endpoints по round-robin: оба sidecar получают запросы.
+func TestRoundRobinDistributesBatches(t *testing.T) {
+	var hits1, hits2 int32
+	s1 := httptest.NewServer(batchEchoHandler(t, &hits1))
+	defer s1.Close()
+	s2 := httptest.NewServer(batchEchoHandler(t, &hits2))
+	defer s2.Close()
+
+	c := NewClientWithEndpoints([]string{s1.URL, s2.URL}, Options{
+		MaxBatch:  16,
+		MaxWait:   2 * time.Millisecond,
+		QueueSize: 256,
+		Workers:   2,
+	})
+	defer c.Close()
+
+	ctx := context.Background()
+	for i := 0; i < 40; i++ {
+		if _, err := c.Detect(ctx, "клиент Иван Петров "+itoa(i)); err != nil {
+			t.Fatalf("Detect error: %v", err)
+		}
+	}
+
+	if hits1 == 0 || hits2 == 0 {
+		t.Fatalf("expected both endpoints to receive batches, got hits1=%d hits2=%d", hits1, hits2)
+	}
+}
+
+// TestUnavailableReplicaFailover проверяет, что при недоступной одной реплике
+// запросы всё равно успешно обрабатываются через другую (failover).
+func TestUnavailableReplicaFailover(t *testing.T) {
+	var hits int32
+	s1 := httptest.NewServer(batchEchoHandler(t, &hits))
+	defer s1.Close()
+
+	// Второй endpoint указывает на закрытый порт (недоступная реплика).
+	dead := httptest.NewServer(batchEchoHandler(t, nil))
+	deadURL := dead.URL
+	dead.Close()
+
+	c := NewClientWithEndpoints([]string{s1.URL, deadURL}, Options{
+		MaxBatch:  16,
+		MaxWait:   2 * time.Millisecond,
+		QueueSize: 256,
+		Workers:   2,
+	})
+	defer c.Close()
+
+	ctx := context.Background()
+	for i := 0; i < 20; i++ {
+		if _, err := c.Detect(ctx, "клиент Иван Петров "+itoa(i)); err != nil {
+			t.Fatalf("Detect error with one replica down: %v", err)
+		}
+	}
+	if hits == 0 {
+		t.Fatalf("expected live replica to serve requests, got hits=%d", hits)
 	}
 }

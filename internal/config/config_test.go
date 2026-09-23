@@ -87,6 +87,21 @@ func TestNEREndpointDefaultAndEnvironmentOverride(t *testing.T) {
 	}
 }
 
+func TestNEREndpointsEnvironmentOverride(t *testing.T) {
+	t.Setenv("PII_NER_ENDPOINT", "http://ner-sidecar:8090")
+	t.Setenv("PII_NER_ENDPOINTS", "http://ner-1:8090, http://ner-2:8090")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.NEREndpoints) != 2 {
+		t.Fatalf("expected 2 NER endpoints, got %v", cfg.NEREndpoints)
+	}
+	if cfg.NEREndpoints[0] != "http://ner-1:8090" || cfg.NEREndpoints[1] != "http://ner-2:8090" {
+		t.Fatalf("NER endpoints: %v", cfg.NEREndpoints)
+	}
+}
+
 func TestInvalidMode(t *testing.T) {
 	cfg := Default()
 	cfg.Consumers = map[string]ConsumerConfig{
